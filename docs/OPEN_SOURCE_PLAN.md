@@ -1,5 +1,9 @@
 # TarCite Workspace — Open-Source Release Plan
 
+> ⚠️ **INTERNAL — DELETE BEFORE MAKING THE REPO PUBLIC.**
+> This file references private infrastructure (server paths, billing/Stripe strategy)
+> and must be removed (`git rm docs/OPEN_SOURCE_PLAN.md`) before the visibility flip.
+
 > Status: **Planning / scaffolding.** This document is the single source of truth for
 > taking TarCite Workspace public on GitHub and signing Windows builds via SignPath.org.
 > Last updated: 2026-06-21.
@@ -63,20 +67,25 @@ Users can instead point at OpenAI, a local Ollama, or any OpenAI-compatible endp
 - [x] `.github/ISSUE_TEMPLATE/` (bug, feature, config) + `PULL_REQUEST_TEMPLATE.md`
 - [ ] `CHANGELOG.md` (can seed from the server's release commit history)
 
-### Phase 1 — Repo hygiene (separate pass, needs your go-ahead)
-- [ ] `git rm` the cert artifacts; add AGPL SPDX headers to source files (optional).
-- [ ] Reconcile `.env.example` with the real `.env` (add `APP_DISPLAY_HOST`, `HF_HUB_OFFLINE`, managed-mode notes).
-- [ ] Move/clean root clutter into `docs/` or `.gitignore`.
-- [ ] Verify no absolute personal paths leak (e.g. `REFERENCES_DIR` defaults).
+### Phase 1 — Repo hygiene & launch — DONE 2026-06-21
+- [x] `git rm` the cert artifacts (`*.certSigningRequest`, `*.cer`).
+- [x] Reconcile `.env.example` with the real `.env` (added `APP_DISPLAY_HOST`, `HF_HUB_OFFLINE`, managed-mode notes).
+- [x] Move root clutter into `docs/` (CITATION_SUGGESTION_MECHANISM, pipeline_diagram, WINDOWS_INSTALL_HELP); gitignore `release/`, `*.dmg`, `*.exe`, `.claude/`, `*.rtf`.
+- [x] Scrub AI-development attribution: clean squashed history (drops all `Co-Authored-By: Claude`), genericized `mcp_server.py` client names, gitignored AI-tool dirs.
+- [x] New repo `tarcite-workspace` (private) created with a single clean "Initial public release" commit; old `tarcite` repo kept as `archive` remote; backup tag `pre-public-cleanup-20260621`.
+- [x] GitHub description + topics set; AGPL-3.0 auto-detected.
+- [ ] (Optional) Add AGPL SPDX headers to source files.
+- [ ] Verify no absolute personal paths leak (e.g. `REFERENCES_DIR` defaults). [REFERENCES_DIR ships blank in .env.example ✓]
 
-### Phase 2 — CI/CD
+### Phase 2 — CI/CD (next)
 - [ ] Add macOS build workflow (mirror `windows-build.yml`).
 - [ ] Add a lint workflow (ruff/black) and a smoke-test job.
 - [ ] Pin a reproducible build (model download step, Python 3.12).
 
 ### Phase 3 — Signing
-- [ ] Apply to SignPath.org OSS tier; wire signing into the Windows release workflow.
-- [ ] Obtain Apple "Developer ID Application" cert; add `codesign` + `notarytool` to macOS build.
+- [ ] Apply to SignPath.org OSS tier (requires the repo to be PUBLIC first); wire signing into the Windows release workflow.
+- [x] Apple "Developer ID Application" cert obtained: PT. DIGITAL ENGINERING INDONESIA (8XBP4MRL6L).
+- [ ] Set up a `notarytool` notarization profile (app-specific password); add `codesign` + notarize to macOS build.
 
 ### Phase 4 — Launch polish
 - [ ] First-class screenshots/GIF in README (reuse landing assets).
