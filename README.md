@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/logo.png" width="110" alt="TarCite Workspace logo">
+
 # TarCite Workspace
 
 **A local-first desktop research & citation manager with AI-assisted citation suggestions.**
@@ -10,6 +12,8 @@ annotate documents, and cite straight into Microsoft Word — all running on you
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
+
+<img src="docs/assets/screenshot-suggestions.png" width="860" alt="TarCite Workspace — AI citation suggestions with source evidence and inline PDF viewer">
 
 </div>
 
@@ -31,9 +35,30 @@ annotate documents, and cite straight into Microsoft Word — all running on you
   Ollama model.
 - **MCP server** — exposes your library as tools for AI agents (see [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md)).
 
+## Demo
+
+Organize sources into research projects, code annotations into themes, and build your
+argument — all locally:
+
+<div align="center">
+  <img src="docs/assets/demo.gif" width="860" alt="TarCite Workspace demo — research projects and thematic coding">
+</div>
+
+> ▶️ [Watch the full-quality video](docs/assets/demo.mp4) · more at [tarcite.com](https://tarcite.com)
+
 ## Screenshots
 
-> _Coming soon — see the [project site](https://tarcite.com) for a live overview._
+**Read & annotate** — highlight, ink, and tag passages alongside your library:
+
+<div align="center">
+  <img src="docs/assets/screenshot-annotations.png" width="820" alt="Library view with PDF annotations and tagging">
+</div>
+
+**Cite into Microsoft Word** — insert formatted citations without leaving your document:
+
+<div align="center">
+  <img src="docs/assets/screenshot-word.png" width="820" alt="TarCite Word add-in inserting citations into a document">
+</div>
 
 ## Install (end users)
 
