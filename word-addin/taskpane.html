@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TarCite Workspace</title>
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/logo/favicon-16x16.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/logo/favicon-32x32.png">
+    <link rel="shortcut icon" href="/static/logo/favicon.ico">
+    <link rel="stylesheet" href="taskpane.css?v=chat-clean-20260531">
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+</head>
+<body>
+    <div id="splash-screen" class="splash-screen" aria-hidden="true">
+        <div class="splash-content">
+            <img src="/static/logo/TarCite_logo_250.png" alt="" class="splash-logo">
+            <div class="splash-title">TarCite Workspace</div>
+            <div class="splash-tagline">Inspired by Indonesia's tarsius</div>
+            <div class="splash-version">v.02.16 (Nokilalaki Peak)</div>
+            <div class="splash-progress"><div class="splash-progress-fill"></div></div>
+        </div>
+        <div class="splash-credit">
+            <a href="https://donate.stripe.com/4gMfZh1Jn1BQfgg2jRbII00" target="_blank" rel="noopener noreferrer"><i data-lucide="coffee" aria-hidden="true"></i> Support with Coffee</a>
+        </div>
+    </div>
+    <div id="app">
+        <header id="header">
+            <div class="header-brand">
+                <img src="/static/logo/TarCite_logo_250.png" alt="" class="header-logo">
+                <h1 class="header-title">TarCite Workspace</h1>
+            </div>
+            <button id="theme-toggle" class="theme-toggle" title="Toggle dark/light mode" aria-label="Toggle dark/light mode" type="button">
+                <i data-lucide="sun-moon" aria-hidden="true"></i>
+            </button>
+        </header>
+
+        <nav id="tabs">
+            <button class="tab-btn active" data-tab="search">Citations</button>
+            <button class="tab-btn" data-tab="chat">Chat</button>
+            <button class="tab-btn" data-tab="suggestion">Suggestion</button>
+            <button class="tab-btn" data-tab="citations" title="Document citations and bibliography">Document</button>
+            <button class="tab-btn tab-icon" data-tab="settings" title="Settings" aria-label="Settings"><i data-lucide="settings" aria-hidden="true"></i></button>
+        </nav>
+
+        <main id="content">
+            <!-- Search Tab -->
+            <div id="tab-search" class="tab-content active">
+                <div class="search-area">
+                    <input type="text" id="search-input" class="search-input" placeholder="Search your library...">
+                    <select id="search-filter" class="compact-select">
+                        <option value="">All sources</option>
+                    </select>
+                </div>
+
+                <!-- Selected Citations Chips -->
+                <div id="selected-citations-area" class="selected-citations-area hidden">
+                    <div class="chips-header">
+                        <span class="chips-count">0 selected</span>
+                        <button id="clear-chips-btn" class="btn-text">Clear all</button>
+                    </div>
+                    <div id="chips-container" class="chips-container"></div>
+                    <div class="citation-format-row">
+                        <label class="format-radio">
+                            <input type="radio" name="citation-format" value="parenthetical" checked>
+                            <span>(Parenthetical)</span>
+                        </label>
+                        <label class="format-radio">
+                            <input type="radio" name="citation-format" value="narrative">
+                            <span>Narrative</span>
+                        </label>
+                    </div>
+                    <button id="insert-all-btn" class="btn-primary btn-insert-all">Insert All Citations</button>
+                </div>
+
+                <div id="search-results" class="results-list"></div>
+            </div>
+
+            <!-- Chat Tab -->
+            <div id="tab-chat" class="tab-content">
+                <section id="suggestion-chat" class="suggestion-chat standalone">
+                    <div class="suggestion-chat-heading">Chat</div>
+                    <div id="suggestion-chat-history" class="suggestion-chat-history hidden"></div>
+                    <div id="suggestion-chat-messages" class="suggestion-chat-messages">
+                        <p class="empty-state compact">Ask about the current suggestions or your local citation library.</p>
+                    </div>
+                    <div class="suggestion-chat-input-row">
+                        <textarea id="suggestion-chat-input" class="suggestion-chat-input" rows="3" placeholder="Ask about sources, citations, or the current suggestions..."></textarea>
+                        <div class="suggestion-chat-action-stack">
+                            <button id="suggestion-chat-new" class="btn-secondary btn-icon btn-icon-mini" title="New chat" aria-label="New chat"><i data-lucide="plus" aria-hidden="true"></i></button>
+                            <button id="suggestion-chat-history-toggle" class="btn-secondary btn-icon btn-icon-mini" title="History" aria-label="Show chat history" aria-expanded="false"><i data-lucide="history" aria-hidden="true"></i></button>
+                            <button id="suggestion-chat-profile-toggle" class="btn-secondary btn-icon btn-icon-mini" title="AI model" aria-label="Change AI model" aria-expanded="false"><i data-lucide="bot" aria-hidden="true"></i></button>
+                            <div id="suggestion-chat-profile-menu" class="tp-profile-menu chat-profile-menu hidden"></div>
+                        </div>
+                        <button id="suggestion-chat-send" class="btn-primary btn-icon" title="Send" aria-label="Send"><i data-lucide="send" aria-hidden="true"></i></button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Citations Tab -->
+            <div id="tab-citations" class="tab-content">
+                <div class="bibliography-controls">
+                    <button id="insert-bibliography-btn" class="btn-primary">Insert Bibliography</button>
+                    <button id="update-bibliography-btn" class="btn-secondary">Update Bibliography</button>
+                    <button id="refresh-citations-btn" class="btn-secondary btn-icon" title="Refresh all citations" aria-label="Refresh all citations"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
+                </div>
+                <div id="citations-list" class="citations-list">
+                    <p class="empty-state">No citations inserted yet.</p>
+                </div>
+            </div>
+
+            <!-- Suggestion Tab -->
+            <div id="tab-suggestion" class="tab-content">
+                <div class="suggestion-input-area">
+                    <textarea id="suggestion-paragraph" class="suggestion-textarea" rows="7" placeholder="Paste a paragraph or use selected text from Word..."></textarea>
+                    <div class="suggestion-controls">
+                        <div class="suggestion-controls-row">
+                            <select id="suggestion-dir-filter" class="compact-select">
+                                <option value="">All sources</option>
+                            </select>
+                            <div class="tp-profile-dropdown">
+                                <button id="tp-profile-btn" class="tp-profile-btn" aria-label="Change AI model" aria-expanded="false">
+                                    <span id="tp-profile-label" class="tp-profile-label">-</span>
+                                    <i data-lucide="chevron-down" class="tp-profile-chevron" aria-hidden="true"></i>
+                                </button>
+                                <div id="tp-profile-menu" class="tp-profile-menu hidden"></div>
+                            </div>
+                            <button id="suggestion-run-btn" class="btn-primary">Suggest</button>
+                        </div>
+                        <div class="suggestion-controls-row">
+                            <div class="suggestion-topk-control" title="Top K controls how many candidate sources are retrieved from your library before the AI chooses citation suggestions. Higher values search wider but can be slower.">
+                                <label for="suggestion-top-k">Top K</label>
+                                <input type="range" id="suggestion-top-k" class="suggestion-topk-slider" value="15" min="1" max="100" step="1" aria-describedby="suggestion-top-k-val">
+                                <span id="suggestion-top-k-val" class="suggestion-topk-val">15</span>
+                            </div>
+                            <div class="suggestion-topk-control" title="Suggestion temperature controls randomness. Lower values are more deterministic.">
+                                <label for="suggestion-temp">Temp</label>
+                                <input type="range" id="suggestion-temp" class="suggestion-topk-slider" value="0.1" min="0" max="2" step="0.05" aria-describedby="suggestion-temp-val">
+                                <span id="suggestion-temp-val" class="suggestion-topk-val">0.10</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="suggestion-progress" class="suggestion-progress hidden">
+                    <div class="progress-track"><div id="suggestion-progress-fill" class="progress-fill"></div></div>
+                    <div class="progress-meta">
+                        <span id="suggestion-progress-step">Starting...</span>
+                        <span id="suggestion-progress-pct">0%</span>
+                    </div>
+                    <div id="suggestion-progress-message" class="progress-message"></div>
+                </div>
+                <div id="suggestion-results" class="suggestion-results"></div>
+                <section id="suggestion-history-section" class="suggestion-history-section hidden">
+                    <div class="suggestion-history-heading-row">
+                        <div class="suggestion-history-heading">History</div>
+                        <button id="suggestion-history-clear-all" class="chat-history-remove-all" type="button">Remove all</button>
+                    </div>
+                    <div id="suggestion-history" class="suggestion-history"></div>
+                </section>
+            </div>
+
+            <!-- Settings Tab -->
+            <div id="tab-settings" class="tab-content">
+                <div class="settings-group">
+                    <label for="style-select">Citation Style</label>
+                    <select id="style-select" class="compact-select">
+                        <option value="apa7">APA 7th</option>
+                        <option value="apa6">APA 6th</option>
+                        <option value="harvard">Harvard</option>
+                        <option value="ieee">IEEE</option>
+                        <option value="chicago">Chicago</option>
+                        <option value="mla">MLA 9th</option>
+                        <option value="vancouver">Vancouver</option>
+                        <option value="nature">Nature</option>
+                        <option value="acs">ACS</option>
+                        <option value="ama">AMA</option>
+                        <option value="elsevier-harvard">Elsevier Harvard</option>
+                        <option value="springer-author-date">Springer Author-Date</option>
+                    </select>
+                </div>
+                <div id="numbered-format-group" class="settings-group hidden">
+                    <label for="numbered-format-select">Numbered Citations</label>
+                    <select id="numbered-format-select" class="compact-select">
+                        <option value="separate">[1], [2], [3]</option>
+                        <option value="grouped">[1, 2, 3]</option>
+                        <option value="ranges">[1]–[3]</option>
+                    </select>
+                </div>
+                <div class="settings-group">
+                    <label for="profile-select">AI Provider</label>
+                    <select id="profile-select" class="compact-select">
+                        <option value="">No profiles configured</option>
+                    </select>
+                </div>
+                <div class="settings-group">
+                    <label>TarCite AI</label>
+                    <div id="tp-quota-panel" class="tp-quota-panel">
+                        <div class="tp-quota-loading">Loading...</div>
+                    </div>
+                </div>
+                <div class="settings-group">
+                    <label for="dir-filter">Source Directory</label>
+                    <select id="dir-filter" class="compact-select">
+                        <option value="">All directories</option>
+                    </select>
+                </div>
+                <div class="settings-group">
+                    <label>Server</label>
+                    <div id="server-info" class="server-info">-</div>
+                </div>
+                <div class="settings-group">
+                    <a class="coffee-link taskpane" href="https://donate.stripe.com/4gMfZh1Jn1BQfgg2jRbII00" target="_blank" rel="noopener noreferrer"><i data-lucide="coffee" aria-hidden="true"></i> Support with Coffee</a>
+                </div>
+            </div>
+        </main>
+
+        <footer class="status-footer">
+            <span id="active-profile-badge" class="active-profile-badge" title="Active AI provider"></span>
+            <div id="connection-status" class="connection-status">
+                <span class="status-dot"></span>
+                <span class="status-text">Connecting...</span>
+            </div>
+        </footer>
+
+        <!-- Citation Edit Modal -->
+        <div id="edit-modal" class="modal-backdrop hidden">
+            <div class="modal-panel">
+                <div class="modal-header">
+                    <h3>Edit Citation</h3>
+                    <button id="edit-modal-close" class="modal-close" aria-label="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+                </div>
+                <div class="modal-body">
+                    <div id="edit-citation-info" class="edit-citation-info">
+                        <div id="edit-citation-heading" class="edit-citation-heading"></div>
+                        <div id="edit-citation-title" class="edit-citation-title"></div>
+                    </div>
+                    <div class="citation-edit-section">
+                        <div class="citation-edit-label">Current citation</div>
+                        <div id="edit-current-citation" class="citation-current-text"></div>
+                    </div>
+                    <div id="edit-format-section" class="settings-group">
+                        <label>Citation form</label>
+                        <div class="segmented-control">
+                            <label>
+                                <input type="radio" name="edit-citation-format" value="parenthetical" checked>
+                                <span>Parenthetical</span>
+                            </label>
+                            <label>
+                                <input type="radio" name="edit-citation-format" value="narrative">
+                                <span>Narrative</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="edit-numbered-note" class="citation-note hidden">
+                        Numbered citation styles are refreshed by document order. Citation modifiers are saved, but they do not change the visible number.
+                    </div>
+                    <div id="edit-items-container" class="citation-edit-items"></div>
+                    <div class="citation-edit-section">
+                        <div class="citation-edit-label">Preview</div>
+                        <div id="edit-preview" class="citation-preview-text">-</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="edit-cancel-btn" class="btn-secondary">Cancel</button>
+                    <button id="edit-save-btn" class="btn-primary">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="loading-overlay" class="loading-overlay hidden">
+            <div class="spinner"></div>
+            <p id="loading-text">Loading...</p>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div id="toast-container" class="toast-container"></div>
+    </div>
+
+    <script src="/static/vendor/lucide.min.js"></script>
+    <script src="taskpane.js?v=chat-clean-20260531"></script>
+</body>
+</html>

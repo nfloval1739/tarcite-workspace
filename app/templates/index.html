@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TarCite Workspace</title>
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/logo/favicon-16x16.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/logo/favicon-32x32.png">
+    <link rel="shortcut icon" href="/static/logo/favicon.ico">
+    <link rel="apple-touch-icon" href="/static/logo/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/style.css?v=quick-search-20260529">
+</head>
+<body>
+    <div id="splash-screen" class="splash-screen" aria-hidden="true">
+        <div class="splash-content">
+            <img src="/static/logo/TarCite_logo_250.png" alt="" class="splash-logo">
+            <div class="splash-title">TarCite Workspace</div>
+            <div class="splash-tagline">Inspired by Indonesia's tarsius</div>
+            <div class="splash-version">v.02.26 (Nokilalaki Peak)</div>
+            <div class="splash-progress"><div class="splash-progress-fill"></div></div>
+        </div>
+        <div class="splash-credit">
+            <a href="https://donate.stripe.com/4gMfZh1Jn1BQfgg2jRbII00" target="_blank" rel="noopener noreferrer"><i data-lucide="coffee" aria-hidden="true"></i> Support with Coffee</a>
+        </div>
+    </div>
+    <div id="app">
+        <!-- Top Bar -->
+        <header id="topbar">
+            <div class="topbar-left">
+                <img src="/static/logo/TarCite_logo_250.png" alt="" class="app-logo">
+                <div class="app-brand">
+                    <span class="app-title">TarCite Workspace</span>
+                    <span class="app-subtitle">Private by design. Built for research.</span>
+                </div>
+                <span id="sync-status" class="sync-status" title="Sync status"></span>
+            </div>
+            <div class="topbar-center">
+                <div class="topbar-profile-dropdown">
+                    <button id="topbar-profile-btn" class="profile-badge" type="button" aria-label="Change AI profile" aria-expanded="false">
+                        <span id="active-profile">No AI profile</span>
+                        <i data-lucide="chevron-down" class="topbar-profile-chevron" aria-hidden="true"></i>
+                    </button>
+                    <div id="topbar-profile-menu" class="topbar-profile-menu hidden"></div>
+                </div>
+            </div>
+            <div class="topbar-right">
+                <!-- Global search trigger -->
+                <button class="search-palette-trigger" onclick="openSearchPalette()" title="Quick search (⌘K / Ctrl+K)" aria-label="Quick search">
+                    <i data-lucide="search" aria-hidden="true"></i>
+                    <span>Search</span>
+                    <kbd>⌘K</kbd>
+                </button>
+                <!-- Download indicator -->
+                <div class="dl-indicator-wrap" id="dlIndicatorWrap" style="display:none">
+                    <button class="dl-indicator-btn" id="dlIndicatorBtn" title="Downloads" aria-label="Downloads">
+                        <i data-lucide="download" aria-hidden="true"></i>
+                        <span class="dl-badge" id="dlBadge" style="display:none"></span>
+                    </button>
+                    <div class="dl-dropdown" id="dlDropdown">
+                        <div class="dl-dropdown-header">Downloads</div>
+                        <div id="dlDropdownList"></div>
+                    </div>
+                </div>
+                <a class="coffee-link" href="https://donate.stripe.com/4gMfZh1Jn1BQfgg2jRbII00" target="_blank" rel="noopener noreferrer"><i data-lucide="coffee" aria-hidden="true"></i> Support with Coffee</a>
+                <button id="theme-toggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+                    <span class="theme-toggle-track">
+                        <span class="theme-toggle-thumb">
+                            <span class="theme-icon moon"><i data-lucide="moon" aria-hidden="true"></i></span>
+                            <span class="theme-icon sun"><i data-lucide="sun" aria-hidden="true"></i></span>
+                        </span>
+                    </span>
+                </button>
+                <button id="hard-reset-btn" class="topbar-icon-btn" type="button" title="Hard refresh app" aria-label="Hard refresh app">
+                    <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <main id="workspace">
+            <!-- Left Sidebar -->
+            <aside id="sidebar">
+                <nav id="sidebar-tabs">
+                    <button class="sidebar-tab active" data-tab="chat">Chat</button>
+                    <button class="sidebar-tab" data-tab="library">Library</button>
+                    <button class="sidebar-tab" data-tab="notes">Themes</button>
+                    <button class="sidebar-tab" data-tab="projects">Projects</button>
+                    <button class="sidebar-tab" data-tab="settings" title="Settings"><i data-lucide="settings" style="width:16px;height:16px;vertical-align:middle;pointer-events:none;"></i></button>
+                </nav>
+
+                <!-- Chat Tab Content -->
+                <div id="tab-chat" class="sidebar-content active">
+                    <div id="chat-sessions-list" class="sessions-list hidden"></div>
+                    <div id="chat-messages" class="messages-area"></div>
+                    <div class="chat-input-area">
+                        <div id="chat-mention-chips" class="chat-mention-chips"></div>
+                        <div style="position:relative">
+                            <textarea id="chat-input" placeholder="Ask about your citations… type @ to reference a paper" rows="2"></textarea>
+                            <div id="chat-mention-autocomplete" class="chat-mention-autocomplete hidden"></div>
+                        </div>
+                        <div class="chat-input-row">
+                            <select id="chat-model-select" class="chat-model-select"></select>
+                            <button id="chat-new" class="btn-secondary chat-action-button" type="button" title="New chat" aria-label="New chat">
+                                <i data-lucide="plus" aria-hidden="true"></i>
+                            </button>
+                            <button id="chat-history-toggle" class="btn-secondary chat-history-toggle" type="button" title="History" aria-label="Show chat history" aria-expanded="false">
+                                <i data-lucide="history" aria-hidden="true"></i>
+                            </button>
+                            <button id="chat-send" class="btn-primary">Send</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Library Tab Content -->
+                <div id="tab-library" class="sidebar-content">
+                    <input type="text" id="library-search" class="compact-input" placeholder="Search library...">
+                    <div id="library-stats-summary" class="library-stats-summary"></div>
+                    <div id="library-sync-status" class="library-sync-status"></div>
+                    <div id="library-tree" class="tree-view"></div>
+                    <div class="library-sidebar-divider"></div>
+                    <div id="library-items-list" class="items-list"></div>
+                </div>
+
+                <!-- Notes Tab Content -->
+                <div id="tab-notes" class="sidebar-content notes-sidebar">
+
+                    <!-- TOP PANE: Themes -->
+                    <div class="notes-pane notes-pane-top" id="notes-pane-top">
+                        <div class="notes-section-header">
+                            <span class="notes-section-title"><i data-lucide="git-branch" aria-hidden="true"></i> Themes</span>
+                            <div class="notes-section-actions">
+                                <div class="notes-theme-export-wrap" style="position:relative">
+                                    <button class="notes-icon-btn" title="Download themes" onclick="toggleThemeExportMenu()"><i data-lucide="download" aria-hidden="true"></i></button>
+                                    <div id="notes-theme-export-menu" class="notes-theme-export-menu hidden">
+                                        <button onclick="exportThemesCSV()"><i data-lucide="table-2" aria-hidden="true"></i> Theme list (CSV)</button>
+                                        <button onclick="exportThemesWithAnnotationsJSON()"><i data-lucide="braces" aria-hidden="true"></i> Full export (JSON)</button>
+                                        <button onclick="exportThemesDocx()"><i data-lucide="file-text" aria-hidden="true"></i> Report (Word)</button>
+                                    </div>
+                                </div>
+                                <button class="notes-icon-btn" title="Import / Export themes" onclick="openTagManager()"><i data-lucide="arrow-up-down" aria-hidden="true"></i></button>
+                                <button class="notes-icon-btn danger" title="Remove all themes" onclick="sidebarDeleteAllThemes()"><i data-lucide="trash-2" aria-hidden="true"></i></button>
+                                <button class="notes-icon-btn notes-add-theme-btn" id="notes-add-theme-toggle" title="Add new theme" onclick="toggleSidebarNewTheme()"><i data-lucide="plus" aria-hidden="true"></i></button>
+                            </div>
+                        </div>
+                        <div id="notes-new-theme-row" class="notes-new-theme-row hidden">
+                            <input type="text" id="notes-new-theme-name" class="compact-input" placeholder="Theme name…" style="flex:1" onkeydown="if(event.key==='Enter') addThemeFromSidebar(); if(event.key==='Escape') toggleSidebarNewTheme(true);">
+                            <input type="color" id="notes-new-theme-color" class="tag-color-input" value="#3b82f6" title="Color" style="width:28px;height:28px">
+                            <button class="btn-small" onclick="addThemeFromSidebar()">Add</button>
+                        </div>
+                        <input type="text" id="notes-tag-search" class="compact-input notes-tag-search" placeholder="Search themes…" oninput="filterTagSidebarList(this.value)">
+                        <div id="notes-tag-filter-list" class="notes-theme-tree"></div>
+                    </div>
+
+                    <!-- DIVIDER / RESIZE HANDLE -->
+                    <div class="notes-pane-divider" id="notes-pane-divider" title="Drag to resize"></div>
+
+                    <!-- BOTTOM PANE: Annotations -->
+                    <div class="notes-pane notes-pane-bottom" id="notes-pane-bottom">
+                        <div class="notes-section-header">
+                            <span class="notes-section-title">
+                                <i data-lucide="bookmark" aria-hidden="true"></i> Annotations
+                                <span id="sidebar-ann-count" class="sidebar-ann-badge">0</span>
+                            </span>
+                            <div class="notes-section-actions">
+                                <button class="notes-icon-btn" onclick="clearAnnotationsFilter()" title="Clear filters"><i data-lucide="filter-x" aria-hidden="true"></i></button>
+                                <button class="notes-icon-btn" onclick="openAnnotationsView()" title="Open full annotations view"><i data-lucide="layout-list" aria-hidden="true"></i></button>
+                            </div>
+                        </div>
+                        <div id="notes-type-filter" class="notes-type-filter">
+                            <button class="notes-type-btn active" data-type="" title="All">All</button>
+                            <button class="notes-type-btn" data-type="highlight" title="Highlights"><i data-lucide="highlighter" aria-hidden="true"></i></button>
+                            <button class="notes-type-btn" data-type="underline" title="Underlines"><i data-lucide="underline" aria-hidden="true"></i></button>
+                            <button class="notes-type-btn" data-type="comment" title="Comments"><i data-lucide="message-square" aria-hidden="true"></i></button>
+                            <button class="notes-type-btn" data-type="area" title="Area selections"><i data-lucide="square" aria-hidden="true"></i></button>
+                            <button class="notes-type-btn" id="sidebar-file-filter-toggle" title="Filter by file" onclick="toggleSidebarFileFilter()"><i data-lucide="file-text" aria-hidden="true"></i></button>
+                        </div>
+                        <div id="sidebar-file-filter-panel" class="sidebar-file-filter-panel hidden"></div>
+                        <input type="text" id="notes-search-input" class="compact-input" placeholder="Search annotations…" style="margin-top:2px" oninput="filterAnnotationsView(); renderSidebarAnnotations()">
+                        <div id="sidebar-ann-list" class="sidebar-ann-list"></div>
+                    </div>
+
+                </div>
+
+                <!-- Projects Tab Content -->
+                <div id="tab-projects" class="sidebar-content projects-sidebar">
+                    <div class="projects-sidebar-header">
+                        <span>Research Projects</span>
+                        <button class="notes-icon-btn" title="New project" onclick="openProjectModal()"><i data-lucide="plus" aria-hidden="true"></i></button>
+                    </div>
+                    <input type="text" id="project-search" class="compact-input" placeholder="Search projects..." oninput="renderProjectsSidebar()">
+                    <div id="projects-sidebar-list" class="projects-sidebar-list"></div>
+                    <div id="projects-section-nav" class="projects-section-nav"></div>
+                </div>
+
+                <!-- Settings Tab Content -->
+                <div id="tab-settings" class="sidebar-content">
+                    <div id="settings-form">
+                        <h4>Appearance</h4>
+                        <div class="settings-field">
+                            <label>Theme Color</label>
+                            <div class="accent-swatches">
+                                <button class="accent-swatch" data-accent="blue"    title="Blue"    style="--swatch-color:#2d6fd4" aria-label="Blue accent"></button>
+                                <button class="accent-swatch" data-accent="teal"    title="Teal"    style="--swatch-color:#0d9da8" aria-label="Teal accent"></button>
+                                <button class="accent-swatch" data-accent="violet"  title="Violet"  style="--swatch-color:#8b5cf6" aria-label="Violet accent"></button>
+                                <button class="accent-swatch" data-accent="rose"    title="Rose"    style="--swatch-color:#e11d48" aria-label="Rose accent"></button>
+                                <button class="accent-swatch" data-accent="amber"   title="Amber"   style="--swatch-color:#d97706" aria-label="Amber accent"></button>
+                                <button class="accent-swatch" data-accent="yellow"  title="Yellow"  style="--swatch-color:#eab308" aria-label="Yellow accent"></button>
+                            </div>
+                        </div>
+
+                        <h4>AI Profiles</h4>
+                        <div id="active-profile-display" class="active-profile-display">
+                            <div id="active-profile-name" class="active-profile-name">-</div>
+                            <div id="active-profile-detail" class="active-profile-detail">No profile selected</div>
+                        </div>
+                        <select id="active-profile-select" class="compact-select settings-full"></select>
+                        <div class="settings-action-row">
+                            <button id="open-profile-modal-btn" class="btn-small">Add Profile</button>
+                            <button id="edit-profile-btn" class="btn-secondary btn-small">Edit</button>
+                            <button id="delete-profile-btn" class="btn-secondary btn-small danger">Delete</button>
+                            <button id="test-active-profile-btn" class="btn-icon-test" title="Test Active" aria-label="Test Active"><i data-lucide="plug" aria-hidden="true"></i></button>
+                        </div>
+                        <div id="active-profile-test-result" class="settings-inline-result"></div>
+
+                        <h4>TarCite AI</h4>
+                        <div id="quota-panel" class="quota-panel">
+                            <div class="quota-loading">Loading...</div>
+                        </div>
+
+                        <h4>Models</h4>
+                        <div class="settings-field">
+                            <label for="settings-embedding-model">Embedding</label>
+                            <select id="settings-embedding-model" class="compact-select">
+                                <option value="BAAI/bge-large-en-v1.5">BGE Large (best)</option>
+                                <option value="all-MiniLM-L6-v2">MiniLM (fastest)</option>
+                                <option value="nomic-ai/nomic-embed-text-v1.5">Nomic</option>
+                                <option value="intfloat/e5-large-v2">E5 Large</option>
+                            </select>
+                        </div>
+                        <div class="settings-field">
+                            <label for="settings-reranker-model">Reranker</label>
+                            <select id="settings-reranker-model" class="compact-select">
+                                <option value="cross-encoder/ms-marco-MiniLM-L-6-v2">MiniLM (fast)</option>
+                                <option value="BAAI/bge-reranker-base">BGE Base (accurate)</option>
+                                <option value="none">Disabled</option>
+                            </select>
+                        </div>
+
+                        <h4>Offline Translation</h4>
+                        <div class="translation-settings-card">
+                            <div id="translation-installed-list" class="translation-installed-list"></div>
+                            <div class="settings-grid two">
+                                <div class="settings-field">
+                                    <label for="translation-source-select">From</label>
+                                    <select id="translation-source-select" class="compact-select"></select>
+                                </div>
+                                <div class="settings-field">
+                                    <label for="translation-target-select">To</label>
+                                    <select id="translation-target-select" class="compact-select"></select>
+                                </div>
+                            </div>
+                            <div id="translation-packages-list">
+                                <div class="packages-loading">Loading translation models...</div>
+                            </div>
+                            <div id="translation-msg" class="settings-inline-result"></div>
+                        </div>
+
+                        <h4>Temperature</h4>
+                        <div class="slider-row" title="Chat temperature controls randomness for chat replies. Lower values are more consistent; higher values are more varied but less predictable.">
+                            <label>Chat</label>
+                            <input type="range" id="settings-chat-temp" min="0" max="2" step="0.05" value="0.3" class="temp-slider">
+                            <span id="settings-chat-temp-val" class="temp-val">0.3</span>
+                        </div>
+
+                        <h4>MCP Server</h4>
+                        <div class="mcp-settings-card">
+                            <div class="slider-row mcp-toggle-row" title="Expose your local library as MCP tools so AI clients (Claude Desktop, Claude Code, Cursor) can search and cite your sources. Runs fully locally.">
+                                <label class="mcp-toggle-label">
+                                    <input type="checkbox" id="settings-mcp-enabled" class="mcp-toggle">
+                                    <span>Enable MCP endpoint (<code>/mcp</code>)</span>
+                                </label>
+                                <span id="mcp-status-badge" class="mcp-status-badge">—</span>
+                            </div>
+                            <div id="mcp-restart-note" class="settings-inline-result mcp-restart-note" style="display:none">
+                                Saved. Restart the app to apply the change to the running endpoint.
+                            </div>
+                            <div class="mcp-field">
+                                <label>HTTP endpoint (Option B)</label>
+                                <div class="mcp-copy-row">
+                                    <input type="text" id="mcp-http-url" class="compact-input mcp-url" readonly value="">
+                                    <button type="button" class="btn-secondary btn-small" onclick="copyMcpField('mcp-http-url')">Copy</button>
+                                </div>
+                            </div>
+                            <details class="mcp-details">
+                                <summary>Connect Claude Desktop (Option A — stdio)</summary>
+                                <p class="mcp-hint">Add this to <code>claude_desktop_config.json</code>, then restart Claude Desktop. Runs as a local subprocess — no network.</p>
+                                <div class="mcp-copy-row">
+                                    <pre id="mcp-stdio-config" class="mcp-config-block"></pre>
+                                    <button type="button" class="btn-secondary btn-small" onclick="copyMcpField('mcp-stdio-config')">Copy</button>
+                                </div>
+                            </details>
+                        </div>
+
+                        <input type="hidden" id="settings-crossref-mailto" value="info@tarcite.com">
+                        <div id="settings-msg" class="settings-msg"></div>
+                        <button id="save-settings-btn" class="btn-primary settings-save-all" type="button">Save All Configuration</button>
+                        <div class="settings-version">TarCite Workspace v.02.26 (Nokilalaki Peak)</div>
+
+                    </div>
+                </div>
+
+                <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+            </aside>
+
+            <!-- Center Pane -->
+            <section id="center-pane">
+                <aside id="annotation-panel" class="annotation-panel hidden"></aside>
+
+                <!-- Citation Assistant View (default) -->
+                <div id="view-citation" class="center-view active">
+                    <div class="citation-input-area">
+                        <textarea id="citation-paragraph" placeholder="Paste your academic paragraph here..." rows="6"></textarea>
+                        <div class="citation-controls">
+                            <div class="citation-controls-row">
+                                <select id="citation-dir-filter" class="compact-select citation-control-item">
+                                    <option value="">All directories</option>
+                                </select>
+                                <div class="citation-profile-dropdown">
+                                    <button id="citation-profile-btn" class="citation-profile-btn" aria-label="Change AI model" aria-expanded="false">
+                                        <span id="citation-profile-label" class="citation-profile-label">-</span>
+                                        <i data-lucide="chevron-down" class="citation-profile-chevron" aria-hidden="true"></i>
+                                    </button>
+                                    <div id="citation-profile-menu" class="citation-profile-menu hidden"></div>
+                                </div>
+                                <button id="suggest-citations-btn" class="btn-primary citation-control-item">Suggest Citations</button>
+                            </div>
+                            <div class="citation-controls-row">
+                                <div class="citation-topk-control" title="Top K controls how many candidate sources are retrieved from your library before the AI chooses citation suggestions. Higher values search wider but can be slower.">
+                                    <label for="citation-top-k">Top K</label>
+                                    <input type="range" id="citation-top-k" value="50" min="1" max="100" step="1" class="citation-topk-slider" aria-describedby="citation-top-k-val">
+                                    <input type="number" id="citation-top-k-val" class="citation-topk-val" value="50" min="1" max="100" step="1" aria-label="Top K value">
+                                </div>
+                                <div class="citation-topk-control" title="Suggestion temperature controls randomness for citation suggestion generation. Lower values are more deterministic.">
+                                    <label for="citation-suggestion-temp">Temp</label>
+                                    <input type="range" id="citation-suggestion-temp" value="0.1" min="0" max="2" step="0.05" class="citation-topk-slider" aria-describedby="citation-suggestion-temp-val">
+                                    <input type="number" id="citation-suggestion-temp-val" class="citation-topk-val" value="0.10" min="0" max="2" step="0.05" aria-label="Temperature value">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="citation-progress" class="citation-progress hidden">
+                        <div class="cp-track"><div id="cp-fill" class="cp-fill"></div></div>
+                        <div class="cp-meta">
+                            <span id="cp-step" class="cp-step"></span>
+                            <span id="cp-pct" class="cp-pct">0%</span>
+                        </div>
+                        <div id="cp-message" class="cp-message"></div>
+                    </div>
+                    <div id="citation-results" class="results-area"></div>
+                    <section id="suggestion-history-section" class="history-section hidden" aria-label="Citation history">
+                        <div class="history-divider">
+                            <span></span>
+                            <h3>History</h3>
+                            <button id="history-remove-all-btn" class="btn-secondary btn-small danger" onclick="deleteAllSuggestionRuns()" title="Remove all history" style="display:none">
+                                <i data-lucide="trash-2" aria-hidden="true"></i> Remove All
+                            </button>
+                            <span></span>
+                        </div>
+                        <div id="suggestion-history" class="history-area"></div>
+                    </section>
+                </div>
+
+                <!-- Library Browser View -->
+                <div id="view-library" class="center-view">
+                    <div class="library-toolbar">
+                        <input type="text" id="library-center-search" placeholder="Search title, author, DOI, year..." class="search-input">
+                        <div class="library-columns-wrap">
+                            <button id="library-columns-btn" class="btn-secondary btn-small" type="button" title="Show or hide columns" aria-expanded="false">
+                                <i data-lucide="columns-3" aria-hidden="true"></i> Columns
+                            </button>
+                            <div id="library-columns-menu" class="library-columns-menu hidden"></div>
+                        </div>
+                        <div class="library-add-wrap">
+                            <button id="library-add-btn" class="btn-small library-add-btn" type="button" title="Add to library" aria-label="Add to library" aria-expanded="false">
+                                <i data-lucide="plus" aria-hidden="true"></i>
+                            </button>
+                            <div id="library-add-menu" class="library-add-menu hidden">
+                                <button id="add-file-btn" class="library-add-option" type="button" title="Add PDF, image, Word, TXT, MD, CSV, RIS or BibTeX file">
+                                    <i data-lucide="file-plus" aria-hidden="true"></i>
+                                    <span>File</span>
+                                </button>
+                                <button id="add-directory-btn" class="library-add-option" type="button" title="Add a library directory">
+                                    <i data-lucide="folder-plus" aria-hidden="true"></i>
+                                    <span>Directory</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="library-view-tabs" role="tablist" aria-label="Library views">
+                        <button class="library-view-tab active" type="button" data-library-view="all">All <span class="library-tab-count"></span></button>
+                        <button class="library-view-tab" type="button" data-library-view="recent">Recent History <span class="library-tab-count"></span></button>
+                        <button class="library-view-tab" type="button" data-library-view="favorite">Favorites <span class="library-tab-count"></span></button>
+                        <button class="library-view-tab" type="button" data-library-view="health">Health <span class="library-tab-count"></span></button>
+                        <button class="library-view-tab" type="button" data-library-view="mindmap">Mind Map <span class="library-tab-count"></span></button>
+                        <button class="library-view-tab hidden" type="button" id="library-related-tab" data-library-view="related">Related <span class="library-tab-count"></span></button>
+                    </div>
+                    <div id="library-drop-zone" class="library-drop-zone">
+                        <div id="library-content-split" class="library-content-split">
+                            <div class="library-list-region">
+                                <div class="table-scroll-wrapper">
+                                    <div id="library-center-table" class="table-view"></div>
+                                </div>
+                                <div id="item-detail-panel" class="detail-panel hidden"></div>
+                            </div>
+                            <aside id="metadata-editor-panel" class="metadata-editor-panel hidden"></aside>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Project Workspace View -->
+                <div id="view-projects" class="center-view">
+                    <div class="project-view-toolbar">
+                        <div>
+                            <div id="project-view-title" class="project-view-title">Projects</div>
+                            <div id="project-view-subtitle" class="project-view-subtitle">Create a workspace for a thesis chapter, article, review, or proposal.</div>
+                        </div>
+                        <button class="btn-small" onclick="openProjectModal()"><i data-lucide="plus" aria-hidden="true"></i> New Project</button>
+                    </div>
+                    <div id="project-view-content" class="project-view-content"></div>
+                </div>
+
+                <!-- Settings Center View -->
+                <div id="view-settings" class="center-view">
+                    <div id="system-status" class="status-panel"></div>
+                    <div id="sync-progress-detail" class="sync-detail hidden"></div>
+                    <div id="library-maintenance" class="settings-section">
+                        <h3>Library maintenance</h3>
+                        <p class="muted">Rebuild the search index from cached text if results look incomplete or after a crash. Safe — does not re-read your PDFs.</p>
+                        <button id="repair-index-btn" class="btn-small" onclick="repairVectorIndex()"><i data-lucide="wrench" aria-hidden="true"></i> Repair vector index</button>
+                        <div id="repair-status" class="library-sync-status"></div>
+                        <div id="text-failures" class="text-failures"></div>
+                    </div>
+                </div>
+
+                <!-- Annotations Synthesis View -->
+                <div id="view-annotations" class="center-view">
+                    <div class="annotations-view-toolbar">
+                        <span class="annotations-view-title"><i data-lucide="layout-list" aria-hidden="true"></i> All Annotations</span>
+                        <span id="annotations-view-count" class="count-badge"></span>
+                        <div class="annotations-view-spacer"></div>
+                        <div class="ann-view-toggle">
+                            <button id="ann-mode-list" class="ann-mode-btn active" title="List view" onclick="switchAnnotationsMode('list')"><i data-lucide="layout-list" aria-hidden="true"></i></button>
+                            <button id="ann-mode-analysis" class="ann-mode-btn" title="Analysis" onclick="switchAnnotationsMode('analysis')"><i data-lucide="bar-chart-2" aria-hidden="true"></i></button>
+                        </div>
+                        <select id="annotations-sort-select" class="compact-select" onchange="filterAnnotationsView()">
+                            <option value="doc">Group by document</option>
+                            <option value="tag">Group by tag</option>
+                            <option value="page">Sort by page</option>
+                            <option value="date">Sort by date</option>
+                        </select>
+                        <div class="annotations-export-wrap" style="position:relative">
+                            <button class="btn-secondary btn-small annotations-export-btn" onclick="toggleAnnotationsExportMenu()" title="Export annotations">
+                                <i data-lucide="download" aria-hidden="true"></i> Export
+                            </button>
+                            <div id="annotations-export-menu" class="annotations-export-menu hidden">
+                                <button onclick="exportAnnotationsCSV()"><i data-lucide="table-2" aria-hidden="true"></i> Export as CSV</button>
+                                <button onclick="exportAnnotationsJSON()"><i data-lucide="braces" aria-hidden="true"></i> Export as JSON</button>
+                                <button onclick="exportAnnotationsDocx()"><i data-lucide="file-text" aria-hidden="true"></i> Export as Word (.docx)</button>
+                            </div>
+                        </div>
+                        <div id="analysis-export-wrap" class="annotations-export-wrap" style="position:relative;display:none">
+                            <button class="btn-secondary btn-small annotations-export-btn" onclick="toggleAnalysisExportMenu()" title="Export analysis">
+                                <i data-lucide="download" aria-hidden="true"></i> Export Analysis
+                            </button>
+                            <div id="analysis-export-menu" class="annotations-export-menu hidden">
+                                <button onclick="exportAnalysisHTML()"><i data-lucide="file-code" aria-hidden="true"></i> HTML Report</button>
+                                <button onclick="exportAnalysisPrint()"><i data-lucide="printer" aria-hidden="true"></i> Print / Save as PDF</button>
+                                <button onclick="exportAnalysisData()"><i data-lucide="table-2" aria-hidden="true"></i> Raw Data (CSV)</button>
+                            </div>
+                        </div>
+                        <button id="annotations-synthesize-btn" class="btn-primary annotations-synthesize-btn" onclick="synthesizeSelectedAnnotations()" disabled>
+                            <i data-lucide="sparkles" aria-hidden="true"></i> Synthesize
+                        </button>
+                    </div>
+                    <div id="annotations-view-content" class="annotations-view-content"></div>
+                    <div id="analysis-content" class="analysis-content hidden"></div>
+                </div>
+            </section>
+
+            <!-- Right Preview Pane -->
+            <aside id="preview-pane">
+                <div id="preview-resize-handle" class="resize-handle"></div>
+                <div id="preview-toolbar" class="preview-toolbar">
+                    <button id="preview-fullscreen-sidebar-toggle" class="icon-btn" title="Show annotations" aria-label="Show annotations"><i data-lucide="panel-left" aria-hidden="true"></i></button>
+                    <span id="preview-title" class="preview-title">No document selected</span>
+                    <button id="reading-status-btn" class="reading-status-btn hidden" onclick="cycleReadingStatus()" title="Reading status" aria-label="Reading status"></button>
+                    <div class="preview-controls">
+                        <div class="pdf-search-control hidden">
+                            <i data-lucide="search" aria-hidden="true"></i>
+                            <input id="pdf-search-input" type="text" placeholder="Search PDF" aria-label="Search PDF">
+                            <span id="pdf-search-count" class="pdf-search-count">-</span>
+                            <button id="pdf-search-prev" class="icon-btn" title="Previous result" aria-label="Previous result"><i data-lucide="chevron-up" aria-hidden="true"></i></button>
+                            <button id="pdf-search-next" class="icon-btn" title="Next result" aria-label="Next result"><i data-lucide="chevron-down" aria-hidden="true"></i></button>
+                            <button id="pdf-search-clear" class="icon-btn" title="Clear search" aria-label="Clear search"><i data-lucide="x" aria-hidden="true"></i></button>
+                        </div>
+                        <button id="preview-page-prev" class="icon-btn" title="Previous page" aria-label="Previous page"><i data-lucide="chevron-left" aria-hidden="true"></i></button>
+                        <span id="preview-page-info" class="page-info">-</span>
+                        <button id="preview-page-next" class="icon-btn" title="Next page" aria-label="Next page"><i data-lucide="chevron-right" aria-hidden="true"></i></button>
+                        <button id="fs-theme-toggle" class="icon-btn fullscreen-only" title="Toggle dark/light mode" aria-label="Toggle dark/light mode"><i data-lucide="sun-moon" aria-hidden="true"></i></button>
+                        <button id="preview-swap-btn" class="icon-btn" title="Move preview to left" aria-label="Move preview to left"><i data-lucide="flip-horizontal" aria-hidden="true"></i></button>
+                        <button id="preview-collapse" class="icon-btn" title="Collapse preview" aria-label="Collapse preview"><i data-lucide="x" aria-hidden="true"></i></button>
+                    </div>
+                </div>
+                <aside id="pdf-fullscreen-sidebar" class="pdf-fullscreen-sidebar" aria-label="PDF navigator and annotations"></aside>
+                <div id="preview-container" class="preview-container">
+                    <div id="pdf-viewer" class="pdf-viewer hidden">
+                        <!-- pages built dynamically by setupPdfPageStack() -->
+                    </div>
+                    <div id="image-viewer" class="image-viewer hidden">
+                        <div class="image-annotation-container">
+                            <img id="preview-image" src="" alt="Preview">
+                            <div class="image-annotation-layer"></div>
+                        </div>
+                    </div>
+                    <div id="text-viewer" class="text-viewer hidden">
+                        <pre id="preview-text"></pre>
+                    </div>
+                    <!-- Document viewer (txt / md / csv / docx) -->
+                    <div id="doc-viewer" class="doc-viewer hidden">
+                        <div class="doc-viewer-toolbar">
+                            <span id="doc-viewer-type" class="doc-type-badge"></span>
+                            <div class="doc-viewer-spacer"></div>
+                            <input type="text" id="doc-search-input" class="compact-input doc-search" placeholder="Find in document…" oninput="docViewerSearch(this.value)">
+                        </div>
+                        <div id="doc-viewer-content" class="doc-viewer-content"></div>
+                    </div>
+                    <div id="preview-empty" class="preview-empty">
+                        <p>Select a document to preview</p>
+                    </div>
+                    <!-- Project notes editor -->
+                    <div id="project-notes-viewer" class="project-notes-viewer hidden" data-notes-scope="project">
+                        <div class="notes-toolbar">
+                            <button class="notes-tool-btn" onmousedown="event.preventDefault()" onclick="notesFormat('bold')" title="Bold"><b>B</b></button>
+                            <button class="notes-tool-btn notes-tool-italic" onmousedown="event.preventDefault()" onclick="notesFormat('italic')" title="Italic"><i>I</i></button>
+                            <button class="notes-tool-btn notes-tool-underline" onmousedown="event.preventDefault()" onclick="notesFormat('underline')" title="Underline"><u>U</u></button>
+                            <div class="notes-toolbar-divider"></div>
+                            <button class="notes-tool-btn" onmousedown="event.preventDefault()" onclick="notesFormat('formatBlock','h1')" title="Heading 1">H1</button>
+                            <button class="notes-tool-btn" onmousedown="event.preventDefault()" onclick="notesFormat('formatBlock','h2')" title="Heading 2">H2</button>
+                            <button class="notes-tool-btn" onmousedown="event.preventDefault()" onclick="notesFormat('formatBlock','p')" title="Normal text">¶</button>
+                            <div class="notes-toolbar-divider"></div>
+                            <button class="notes-tool-btn" onmousedown="event.preventDefault()" onclick="notesFormat('insertUnorderedList')" title="Bullet list">• List</button>
+                            <button class="notes-tool-btn" onmousedown="event.preventDefault()" onclick="notesFormat('insertOrderedList')" title="Numbered list">1. List</button>
+                            <div class="notes-toolbar-divider"></div>
+                            <button class="notes-tool-btn" onmousedown="event.preventDefault()" onclick="notesFormat('justifyLeft')" title="Align left"><i data-lucide="align-left" aria-hidden="true"></i></button>
+                            <button class="notes-tool-btn" onmousedown="event.preventDefault()" onclick="notesFormat('justifyCenter')" title="Align center"><i data-lucide="align-center" aria-hidden="true"></i></button>
+                            <button class="notes-tool-btn" onmousedown="event.preventDefault()" onclick="notesFormat('justifyRight')" title="Align right"><i data-lucide="align-right" aria-hidden="true"></i></button>
+                            <div class="notes-toolbar-divider"></div>
+                            <div class="notes-color-control" data-notes-role="color-control" onmousedown="event.preventDefault()">
+                                <button class="notes-tool-btn notes-color-apply-btn" onclick="notesApplyActiveColor()" title="Apply text color">
+                                    <span id="notes-color-indicator" data-notes-role="color-indicator">A</span>
+                                </button>
+                                <button class="notes-tool-btn notes-color-menu-btn" onclick="toggleNotesColorMenu(event)" title="Choose text color" aria-label="Choose text color">
+                                    <i data-lucide="chevron-down" aria-hidden="true"></i>
+                                </button>
+                                <div id="notes-color-menu" class="notes-color-menu hidden" data-notes-role="color-menu">
+                                    <div class="notes-color-menu-section" id="notes-color-recent-section" data-notes-role="color-recent-section">
+                                        <div class="notes-color-menu-title">Recent</div>
+                                        <div id="notes-color-recent" class="notes-color-grid" data-notes-role="color-recent"></div>
+                                    </div>
+                                    <div class="notes-color-menu-section">
+                                        <div class="notes-color-menu-title">Colors</div>
+                                        <div id="notes-color-presets" class="notes-color-grid" data-notes-role="color-presets"></div>
+                                    </div>
+                                    <button class="notes-color-custom-btn" type="button" onclick="openNotesColorPicker(event)">
+                                        <span class="notes-color-custom-swatch" id="notes-color-custom-swatch" data-notes-role="color-custom-swatch"></span>
+                                        <span>Custom color</span>
+                                    </button>
+                                    <input type="color" id="notes-color-input" data-notes-role="color-input" value="#e4e8f0" tabindex="-1" onchange="notesChooseCustomColor(this.value)">
+                                </div>
+                            </div>
+                            <div class="notes-toolbar-divider"></div>
+                            <button id="notes-ink-btn" class="notes-tool-btn notes-ink-btn" onmousedown="event.preventDefault()" onclick="toggleNotesInkMode()" title="Ink connection — click in notes, drag to any element in the project view">
+                                <i data-lucide="git-branch" style="width:13px;height:13px;pointer-events:none;"></i>
+                            </button>
+                            <div class="notes-toolbar-spacer"></div>
+                            <span id="notes-save-status" class="notes-save-status" data-notes-role="status"></span>
+                        </div>
+                        <div class="project-notes-body" data-notes-role="body">
+                            <div id="project-notes-content" class="project-notes-content" data-notes-role="content" contenteditable="true" spellcheck="true" data-placeholder="Start writing your project notes here…" oninput="onNotesInput()" onmouseup="saveNotesSelection()" onkeyup="saveNotesSelection()"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="annotation-tools" class="annotation-tools hidden">
+                    <button class="tool-btn active" data-tool="select" title="Select text to copy" aria-label="Select text to copy"><i data-lucide="text-cursor" aria-hidden="true"></i></button>
+                    <button class="tool-btn" data-tool="highlight" title="Highlight" aria-label="Highlight"><i data-lucide="highlighter" aria-hidden="true"></i></button>
+                    <button class="tool-btn" data-tool="underline" title="Underline" aria-label="Underline"><i data-lucide="underline" aria-hidden="true"></i></button>
+                    <button class="tool-btn" data-tool="comment" title="Comment" aria-label="Comment"><i data-lucide="message-square" aria-hidden="true"></i></button>
+                    <button class="tool-btn" data-tool="area" title="Select area" aria-label="Select area"><i data-lucide="square" aria-hidden="true"></i></button>
+                    <button class="tool-btn" data-tool="draw" title="Freehand draw" aria-label="Freehand draw"><i data-lucide="pencil" aria-hidden="true"></i></button>
+                    <label class="draw-size-label draw-tool-only hidden" title="Stroke size">
+                        <span>Size</span>
+                        <input type="number" id="draw-size-input" class="draw-size-input" min="1" max="20" step="1" value="4" aria-label="Stroke size">
+                    </label>
+                    <div class="color-picker">
+                        <button class="color-btn active" data-color="#ffff00" style="background:#ffff00"></button>
+                        <button class="color-btn" data-color="#00ff00" style="background:#00ff00"></button>
+                        <button class="color-btn" data-color="#00ffff" style="background:#00ffff"></button>
+                        <button class="color-btn" data-color="#ff99cc" style="background:#ff99cc"></button>
+                        <button class="color-btn" data-color="#ff6600" style="background:#ff6600"></button>
+                    </div>
+                    <button id="auto-annotation-btn" class="tool-btn" title="Auto annotation" aria-label="Auto annotation"><i data-lucide="wand-sparkles" aria-hidden="true"></i></button>
+                    <button id="annotation-undo-btn" class="tool-btn annotation-undo-btn" title="Undo annotation" aria-label="Undo annotation" disabled><i data-lucide="undo-2" aria-hidden="true"></i></button>
+                    <button id="collapse-annotations-btn" class="tool-btn" title="Collapse to annotations" aria-label="Collapse to annotations"><i data-lucide="fold-vertical" aria-hidden="true"></i></button>
+                    <span class="annotation-tools-divider annotation-tools-push-right"></span>
+                    <button id="preview-zoom-out" class="tool-btn" title="Zoom out" aria-label="Zoom out"><i data-lucide="zoom-out" aria-hidden="true"></i></button>
+                    <button id="preview-zoom-in" class="tool-btn" title="Zoom in" aria-label="Zoom in"><i data-lucide="zoom-in" aria-hidden="true"></i></button>
+                    <button id="preview-fullscreen" class="tool-btn" title="Fullscreen preview" aria-label="Fullscreen preview"><i data-lucide="maximize-2" aria-hidden="true"></i></button>
+                </div>
+                <div id="annotation-list" class="annotation-list hidden"></div>
+            </aside>
+        </main>
+
+        <div id="directory-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="directory-modal-title">
+            <div class="modal-panel">
+                <div class="modal-header">
+                    <h3 id="directory-modal-title">Add Library</h3>
+                    <button class="modal-close" data-close-modal="directory-modal" title="Close" aria-label="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+                </div>
+                <div class="modal-body">
+                    <div class="settings-field">
+                        <label for="new-dir-path">Folder Path</label>
+                        <div style="display:flex;gap:6px">
+                            <input type="text" id="new-dir-path" class="compact-input" placeholder="/Users/you/Documents/Papers" style="flex:1">
+                            <button class="btn-secondary btn-small" onclick="browseFolder('new-dir-path')" type="button">Browse…</button>
+                        </div>
+                    </div>
+                    <div class="settings-field">
+                        <label for="new-dir-label">Label</label>
+                        <input type="text" id="new-dir-label" class="compact-input" placeholder="My Papers">
+                    </div>
+                    <div id="dir-suggestions" class="dir-suggestions"></div>
+                    <div id="dir-test-result" class="settings-inline-result" style="display:none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="test-dir-btn" class="btn-secondary btn-small" style="display:none">Test</button>
+                    <button class="btn-secondary btn-small" onclick="closeModal('directory-modal'); openZoteroImportModal()">Import from Zotero</button>
+                    <button class="btn-secondary btn-small" onclick="closeModal('directory-modal'); openMendeleyImportModal()">Import from Mendeley</button>
+                    <button class="btn-secondary btn-small" data-close-modal="directory-modal">Cancel</button>
+                    <button id="add-dir-btn" class="btn-small">Add Folder</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="zotero-import-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="zotero-modal-title">
+            <div class="modal-panel" style="max-width:520px">
+                <div class="modal-header">
+                    <h3 id="zotero-modal-title">Import from Zotero</h3>
+                    <button class="modal-close" data-close-modal="zotero-import-modal" title="Close" aria-label="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="zotero-db-path">
+                    <div class="settings-field">
+                        <label for="zotero-dest-path">Destination Folder</label>
+                        <div style="display:flex;gap:6px">
+                            <input type="text" id="zotero-dest-path" class="compact-input" placeholder="/Users/you/Documents/MyLibrary" style="flex:1">
+                            <button class="btn-secondary btn-small" onclick="browseFolder('zotero-dest-path')" type="button">Browse…</button>
+                        </div>
+                        <small style="color:var(--text-muted);margin-top:4px;display:block">Your Zotero library will be copied here as real folders matching your collection structure.</small>
+                    </div>
+                    <div class="settings-field">
+                        <label for="zotero-label">Library Label</label>
+                        <input type="text" id="zotero-label" class="compact-input" value="Zotero Library">
+                    </div>
+                    <div id="zotero-preview-tree" style="max-height:200px;overflow-y:auto;background:var(--bg-tertiary);border-radius:var(--radius);padding:8px;margin-top:4px;font-size:13px"></div>
+                    <div id="zotero-import-msg" class="settings-inline-result"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary btn-small" data-close-modal="zotero-import-modal">Cancel</button>
+                    <button id="zotero-import-btn" class="btn-small" onclick="doZoteroImport()" disabled>Import</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mendeley import modal -->
+        <div id="mendeley-import-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="mendeley-modal-title">
+            <div class="modal-panel" style="max-width:520px">
+                <div class="modal-header">
+                    <h3 id="mendeley-modal-title">Import from Mendeley</h3>
+                    <button class="modal-close" data-close-modal="mendeley-import-modal" title="Close" aria-label="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="mendeley-db-path">
+                    <div class="settings-field">
+                        <label for="mendeley-dest-path">Destination Folder</label>
+                        <div style="display:flex;gap:6px">
+                            <input type="text" id="mendeley-dest-path" class="compact-input" placeholder="/Users/you/Documents/MendeleyLibrary" style="flex:1">
+                            <button class="btn-secondary btn-small" onclick="browseFolder('mendeley-dest-path')" type="button">Browse…</button>
+                        </div>
+                        <small style="color:var(--text-muted);margin-top:4px;display:block">PDFs are copied here and a <code>_references.ris</code> file is created for all documents.</small>
+                    </div>
+                    <div class="settings-field">
+                        <label for="mendeley-label">Library Label</label>
+                        <input type="text" id="mendeley-label" class="compact-input" value="Mendeley Library">
+                    </div>
+                    <div id="mendeley-preview-info" style="background:var(--bg-tertiary);border-radius:var(--radius);padding:10px;margin-top:4px;font-size:13px;display:none">
+                        <div id="mendeley-preview-counts" style="margin-bottom:6px;color:var(--text-secondary)"></div>
+                        <div id="mendeley-preview-collections" style="color:var(--text-muted)"></div>
+                    </div>
+                    <div id="mendeley-import-msg" class="settings-inline-result"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary btn-small" data-close-modal="mendeley-import-modal">Cancel</button>
+                    <button id="mendeley-import-btn" class="btn-small" onclick="doMendeleyImport()" disabled>Import</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="profile-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title">
+            <div class="modal-panel">
+                <div class="modal-header">
+                    <h3 id="profile-modal-title">Add AI Profile</h3>
+                    <button class="modal-close" data-close-modal="profile-modal" title="Close" aria-label="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+                </div>
+                <div class="modal-body">
+                    <div class="settings-grid two">
+                        <div class="settings-field">
+                            <label for="new-profile-name">Profile Name</label>
+                            <input type="text" id="new-profile-name" class="compact-input" placeholder="My Profile">
+                        </div>
+                        <div class="settings-field">
+                            <label for="new-profile-provider">Provider Label</label>
+                            <input type="text" id="new-profile-provider" class="compact-input" placeholder="OpenAI">
+                        </div>
+                    </div>
+                    <div class="settings-field">
+                        <label for="new-profile-base-url">API Base URL</label>
+                        <input type="text" id="new-profile-base-url" class="compact-input" placeholder="https://api.openai.com/v1">
+                    </div>
+                    <div class="settings-field">
+                        <label for="new-profile-api-key">API Key</label>
+                        <input type="password" id="new-profile-api-key" class="compact-input" placeholder="sk-... (leave blank for local)" autocomplete="off">
+                    </div>
+                    <div class="settings-field">
+                        <label for="new-profile-model">Chat Model</label>
+                        <input type="text" id="new-profile-model" class="compact-input" placeholder="gpt-4.1-mini">
+                    </div>
+                    <div id="profile-test-result" class="settings-inline-result"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="test-profile-btn" class="btn-secondary btn-small">Test</button>
+                    <button class="btn-secondary btn-small" data-close-modal="profile-modal">Cancel</button>
+                    <button id="add-profile-btn" class="btn-small">Add Profile</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="project-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="project-modal-title">
+            <div class="modal-panel" style="max-width:520px">
+                <div class="modal-header">
+                    <h3 id="project-modal-title">New Project</h3>
+                    <button class="modal-close" data-close-modal="project-modal" title="Close" aria-label="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="project-edit-id">
+                    <div class="settings-field">
+                        <label for="project-name">Project Name</label>
+                        <input type="text" id="project-name" class="compact-input" placeholder="Thesis Chapter 2">
+                    </div>
+                    <div class="settings-grid two">
+                        <div class="settings-field">
+                            <label for="project-type">Type</label>
+                            <select id="project-type" class="compact-select">
+                                <option value="thesis_chapter">Thesis chapter</option>
+                                <option value="article">Journal article</option>
+                                <option value="systematic_review">Systematic review</option>
+                                <option value="proposal">Proposal</option>
+                                <option value="project">Project</option>
+                            </select>
+                        </div>
+                        <div class="settings-field">
+                            <label for="project-status">Status</label>
+                            <select id="project-status" class="compact-select">
+                                <option value="active">Active</option>
+                                <option value="paused">Paused</option>
+                                <option value="complete">Complete</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="settings-field">
+                        <label for="project-research-question">Research Question</label>
+                        <textarea id="project-research-question" class="compact-input" rows="3" placeholder="What question is this workspace answering?"></textarea>
+                    </div>
+                    <div class="settings-field">
+                        <label for="project-objective">Objective</label>
+                        <textarea id="project-objective" class="compact-input" rows="3" placeholder="What should this project produce?"></textarea>
+                    </div>
+                    <div id="project-msg" class="settings-inline-result"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary btn-small" data-close-modal="project-modal">Cancel</button>
+                    <button id="save-project-btn" class="btn-small" onclick="saveProject()">Save Project</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="project-assign-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="project-assign-title">
+            <div class="modal-panel" style="max-width:420px">
+                <div class="modal-header">
+                    <h3 id="project-assign-title">Add to Project</h3>
+                    <button class="modal-close" data-close-modal="project-assign-modal" title="Close" aria-label="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="project-assign-type">
+                    <input type="hidden" id="project-assign-id">
+                    <div class="settings-field">
+                        <label for="project-assign-select">Project</label>
+                        <select id="project-assign-select" class="compact-select"></select>
+                    </div>
+                    <div id="project-assign-msg" class="settings-inline-result"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary btn-small" data-close-modal="project-assign-modal">Cancel</button>
+                    <button class="btn-small" onclick="confirmProjectAssignment()">Add</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="upload-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="upload-modal-title">
+            <div class="modal-panel">
+                <div class="modal-header">
+                    <h3 id="upload-modal-title">Add File</h3>
+                    <button class="modal-close" data-close-modal="upload-modal" title="Close" aria-label="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+                </div>
+                <div class="modal-body">
+                    <div class="settings-field">
+                        <label for="upload-file-input">PDF, Image, Word, TXT, Markdown, CSV, RIS, or BibTeX</label>
+                        <input type="file" id="upload-file-input" accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.tiff,.tif,.ris,.bib,.bibtex,.txt,.md,.markdown,.csv,.docx,application/pdf,image/*,application/x-research-info-systems,application/x-bibtex,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv" class="file-input">
+                    </div>
+                    <div class="settings-field">
+                        <label for="upload-dir-select">Save to Directory</label>
+                        <select id="upload-dir-select" class="compact-select"></select>
+                    </div>
+                    <div id="upload-subfolder-row" class="settings-field hidden">
+                        <label for="upload-subfolder-select">Subfolder (optional)</label>
+                        <select id="upload-subfolder-select" class="compact-select">
+                            <option value="">Root directory</option>
+                        </select>
+                    </div>
+                    <div id="upload-msg" class="settings-inline-result"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary btn-small" data-close-modal="upload-modal">Cancel</button>
+                    <button id="upload-file-btn" class="btn-small">Upload & Sync</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Search Palette -->
+    <div id="search-palette" class="search-palette hidden" role="dialog" aria-modal="true" aria-label="Quick search">
+        <div class="search-palette-backdrop" onclick="closeSearchPalette()"></div>
+        <div class="search-palette-panel">
+            <div class="search-palette-input-row">
+                <i data-lucide="search" aria-hidden="true"></i>
+                <input type="text" id="search-palette-input" class="search-palette-input" placeholder="Search library, annotations, projects, themes…" autocomplete="off" spellcheck="false" aria-label="Search">
+                <kbd class="search-palette-esc">Esc</kbd>
+            </div>
+            <div id="search-palette-results" class="search-palette-results">
+                <div class="search-palette-empty">Type to search library, annotations, projects, and themes…</div>
+            </div>
+            <div class="search-palette-footer">
+                <span><kbd>↑↓</kbd> navigate</span>
+                <span><kbd>↵</kbd> open</span>
+                <span><kbd>Esc</kbd> close</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Note Drawer -->
+    <div id="note-drawer" class="note-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="note-drawer-title">
+        <div class="note-drawer-overlay" onclick="closeNoteDrawer()"></div>
+        <div class="note-drawer-panel">
+            <div class="note-drawer-header">
+                <div class="note-drawer-meta">
+                    <span id="note-drawer-type-icon" class="note-drawer-type-icon"></span>
+                    <span id="note-drawer-title" class="note-drawer-doc-title"></span>
+                    <span id="note-drawer-page" class="note-drawer-page"></span>
+                </div>
+                <button class="note-drawer-close icon-btn" onclick="closeNoteDrawer()" aria-label="Close note"><i data-lucide="x" aria-hidden="true"></i></button>
+            </div>
+            <div id="note-drawer-quote" class="note-drawer-quote"></div>
+            <div class="note-drawer-body">
+                <label class="note-drawer-label">Note</label>
+                <div class="note-drawer-editor-wrap">
+                    <textarea id="note-drawer-textarea" class="note-drawer-textarea" placeholder="Write your note… use #tag to tag, @author to cross-reference" rows="8" oninput="onNoteDrawerInput(event)" onkeydown="onNoteDrawerKeydown(event)"></textarea>
+                    <div class="note-tag-autocomplete hidden"></div>
+                </div>
+                <div class="note-drawer-tag-section">
+                    <label class="note-drawer-label">Tags on this annotation</label>
+                    <div id="note-drawer-tags" class="note-drawer-tags"></div>
+                </div>
+            </div>
+            <div class="note-drawer-footer">
+                <button class="btn-secondary" onclick="closeNoteDrawer()">Cancel</button>
+                <button class="btn-primary" onclick="saveNoteDrawer()"><i data-lucide="check" aria-hidden="true"></i> Save Note</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tag Manager Modal -->
+    <div id="tag-manager-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="tag-manager-title">
+        <div class="modal-panel" style="max-width:380px">
+            <div class="modal-header">
+                <h3 id="tag-manager-title"><i data-lucide="arrow-up-down" aria-hidden="true"></i> Import / Export Themes</h3>
+                <button class="modal-close" data-close-modal="tag-manager-modal" title="Close" aria-label="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+            </div>
+            <div class="modal-body">
+                <p class="theme-manager-desc">Import from a JSON tree or CSV file, or export your theme tree as JSON for backup and sharing.</p>
+                <p class="theme-manager-desc" style="margin-top:6px"><strong>JSON format:</strong> <code>[{name, color, children:[...]}]</code><br><strong>CSV format:</strong> <code>name, parent, color</code> (header row required)</p>
+                <div class="theme-manager-toolbar" style="margin-top:12px">
+                    <label class="btn-secondary btn-small theme-import-label" title="Import themes from JSON or CSV">
+                        <i data-lucide="upload" aria-hidden="true"></i> Import file…
+                        <input type="file" id="theme-import-file" accept=".json,.csv" style="display:none" onchange="importThemes(this)">
+                    </label>
+                    <button class="btn-small" onclick="exportThemes()"><i data-lucide="download" aria-hidden="true"></i> Export JSON</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary btn-small" data-close-modal="tag-manager-modal">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Sub-theme inline modal (reuses tag manager modal flow) -->
+    <div id="sub-theme-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+        <div class="modal-panel" style="max-width:380px">
+            <div class="modal-header">
+                <h3>Add Sub-theme</h3>
+                <button class="modal-close" data-close-modal="sub-theme-modal" title="Close" aria-label="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+            </div>
+            <div class="modal-body">
+                <p id="sub-theme-parent-label" class="sub-theme-parent-label"></p>
+                <div class="tag-manager-create">
+                    <input type="text" id="sub-theme-name" class="compact-input" placeholder="Sub-theme name…" style="flex:1" onkeydown="if(event.key==='Enter') commitAddSubTheme()">
+                    <input type="color" id="sub-theme-color" class="tag-color-input" value="#3b82f6" title="Color">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary btn-small" data-close-modal="sub-theme-modal">Cancel</button>
+                <button class="btn-small" onclick="commitAddSubTheme()">Add Sub-theme</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/pdfjs/build/pdf.mjs" type="module"></script>
+    <script type="module">
+        import * as pdfjsLib from '/static/pdfjs/build/pdf.mjs';
+        window.pdfjsLib = pdfjsLib;
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdfjs/build/pdf.worker.mjs';
+    </script>
+    <script src="/static/vendor/lucide.min.js"></script>
+    <script src="/static/js/app-state.js?v=frontend-core-split-20260527"></script>
+    <script src="/static/js/app-utils.js?v=frontend-core-split-20260527"></script>
+    <script src="/static/app.js?v=frontend-citation-chat-split-20260527"></script>
+    <script src="/static/js/app-citation-chat.js?v=frontend-citation-chat-split-20260527"></script>
+    <script src="/static/js/app-settings.js?v=frontend-citation-chat-split-20260527"></script>
+    <script src="/static/js/app-library.js?v=library-health-tabs-20260528"></script>
+    <script src="/static/js/app-preview.js?v=frontend-citation-chat-split-20260527"></script>
+    <script src="/static/js/app-projects.js?v=frontend-citation-chat-split-20260527"></script>
+    <script src="/static/js/app-annotations.js?v=frontend-citation-chat-split-20260527"></script>
+    <script src="/static/js/app-search.js?v=quick-search-20260529"></script>
+    <script src="/static/js/app-bootstrap.js?v=frontend-citation-chat-split-20260527"></script>
+<!-- Ink connection SVG overlay — fixed viewport, pointer-events managed per-group -->
+<svg id="ink-connection-overlay" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
+
+</body>
+</html>

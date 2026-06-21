@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1200" height="1010" viewBox="0 0 1200 1010" xmlns="http://www.w3.org/2000/svg"
+     font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif">
+
+  <defs>
+    <filter id="shadow" x="-5%" y="-5%" width="115%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto">
+      <path d="M0,0.5 L0,6.5 L7,3.5 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="1010" fill="#F1F5F9"/>
+
+  <!-- Title -->
+  <text x="600" y="46" text-anchor="middle" font-size="25" font-weight="800" fill="#0F172A">TarCite: Citation Suggestion Pipeline</text>
+  <text x="600" y="65" text-anchor="middle" font-size="12.5" fill="#64748B">How your research library is indexed and transformed into intelligent citation suggestions</text>
+
+  <!-- ═══════════════════════════════════════════════════
+       PHASE 1 PANEL
+  ═══════════════════════════════════════════════════ -->
+  <rect x="18" y="78" width="344" height="630" rx="14" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="18" y="78" width="344" height="48" rx="14" fill="#1D4ED8"/>
+  <rect x="18" y="102" width="344" height="24" fill="#1D4ED8"/>
+  <text x="190" y="106" text-anchor="middle" font-size="11" font-weight="700" fill="#BFDBFE" letter-spacing="2">PHASE 1</text>
+  <text x="190" y="121" text-anchor="middle" font-size="11" fill="#93C5FD">Document Ingestion &amp; Indexing</text>
+
+  <!-- Box 1: Input Files -->
+  <rect x="33" y="142" width="314" height="72" rx="10" fill="white" stroke="#BFDBFE" stroke-width="1" filter="url(#shadow)"/>
+  <rect x="33" y="142" width="7" height="72" rx="3.5" fill="#3B82F6"/>
+  <text x="90" y="180" text-anchor="middle" font-size="22">📄</text>
+  <text x="222" y="163" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A8A">PDF / RIS / BibTeX Files</text>
+  <text x="222" y="179" text-anchor="middle" font-size="10.5" fill="#64748B">Your personal research library</text>
+  <text x="222" y="194" text-anchor="middle" font-size="10.5" fill="#64748B">or imported from Zotero</text>
+
+  <line x1="190" y1="214" x2="190" y2="230" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Box 2: Text Extraction -->
+  <rect x="33" y="233" width="314" height="85" rx="10" fill="white" stroke="#BFDBFE" stroke-width="1" filter="url(#shadow)"/>
+  <rect x="33" y="233" width="7" height="85" rx="3.5" fill="#3B82F6"/>
+  <text x="90" y="277" text-anchor="middle" font-size="22">🔍</text>
+  <text x="222" y="255" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A8A">Text Extraction + Metadata</text>
+  <text x="222" y="270" text-anchor="middle" font-size="10.5" fill="#64748B">PyMuPDF: full text extraction</text>
+  <text x="222" y="284" text-anchor="middle" font-size="10.5" fill="#64748B">First-page parser: title, authors, DOI</text>
+  <text x="222" y="298" text-anchor="middle" font-size="10.5" fill="#64748B">Stored in SQLite (~25 tables)</text>
+
+  <line x1="190" y1="318" x2="190" y2="334" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Box 3: Crossref -->
+  <rect x="33" y="337" width="314" height="70" rx="10" fill="white" stroke="#BFDBFE" stroke-width="1" filter="url(#shadow)"/>
+  <rect x="33" y="337" width="7" height="70" rx="3.5" fill="#3B82F6"/>
+  <text x="90" y="374" text-anchor="middle" font-size="22">🌐</text>
+  <text x="222" y="360" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A8A">Crossref API Enrichment</text>
+  <text x="222" y="375" text-anchor="middle" font-size="10.5" fill="#64748B">DOI → Authors, journal, year</text>
+  <text x="222" y="389" text-anchor="middle" font-size="10.5" fill="#64748B">Citation count metadata boost</text>
+
+  <line x1="190" y1="407" x2="190" y2="423" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Box 4: Chunking -->
+  <rect x="33" y="426" width="314" height="85" rx="10" fill="white" stroke="#BFDBFE" stroke-width="1" filter="url(#shadow)"/>
+  <rect x="33" y="426" width="7" height="85" rx="3.5" fill="#3B82F6"/>
+  <text x="90" y="470" text-anchor="middle" font-size="22">✂️</text>
+  <text x="222" y="449" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A8A">Sentence-Aware Chunking</text>
+  <text x="222" y="464" text-anchor="middle" font-size="10.5" fill="#64748B">~900 chars · 200-char overlap</text>
+  <text x="222" y="479" text-anchor="middle" font-size="10.5" fill="#64748B">Splits at sentence boundaries</text>
+  <text x="222" y="494" text-anchor="middle" font-size="10.5" fill="#64748B">Sources: abstract · notes · full text</text>
+
+  <line x1="190" y1="511" x2="190" y2="527" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Dual Index label -->
+  <text x="190" y="543" text-anchor="middle" font-size="11" font-weight="700" fill="#1D4ED8" letter-spacing="1">⚡ DUAL INDEX</text>
+
+  <!-- ChromaDB box -->
+  <rect x="33" y="550" width="148" height="95" rx="10" fill="#DBEAFE" stroke="#60A5FA" stroke-width="1.5"/>
+  <text x="107" y="575" text-anchor="middle" font-size="18">🗄️</text>
+  <text x="107" y="592" text-anchor="middle" font-size="11" font-weight="700" fill="#1E40AF">ChromaDB</text>
+  <text x="107" y="607" text-anchor="middle" font-size="10" fill="#3B82F6">Vector Store</text>
+  <text x="107" y="621" text-anchor="middle" font-size="10" fill="#475569">HNSW · Cosine sim.</text>
+  <text x="107" y="635" text-anchor="middle" font-size="10" fill="#475569">Semantic search</text>
+
+  <!-- SQLite FTS5 box -->
+  <rect x="195" y="550" width="148" height="95" rx="10" fill="#DBEAFE" stroke="#60A5FA" stroke-width="1.5"/>
+  <text x="269" y="575" text-anchor="middle" font-size="18">⚡</text>
+  <text x="269" y="592" text-anchor="middle" font-size="11" font-weight="700" fill="#1E40AF">SQLite FTS5</text>
+  <text x="269" y="607" text-anchor="middle" font-size="10" fill="#3B82F6">Full-Text Index</text>
+  <text x="269" y="621" text-anchor="middle" font-size="10" fill="#475569">BM25 · Porter stem</text>
+  <text x="269" y="635" text-anchor="middle" font-size="10" fill="#475569">Keyword search</text>
+
+  <!-- Embedding note -->
+  <rect x="33" y="655" width="314" height="35" rx="8" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="190" y="670" text-anchor="middle" font-size="10.5" fill="#1D4ED8">Embeddings: all-MiniLM-L6-v2 (384-dim)</text>
+  <text x="190" y="683" text-anchor="middle" font-size="10" fill="#64748B">MPS (Apple Silicon) · CUDA · CPU auto-detect</text>
+
+  <!-- Index → Phase 2 note -->
+  <rect x="33" y="698" width="314" height="28" rx="8" fill="#FEF3C7" stroke="#FCD34D" stroke-width="1"/>
+  <text x="190" y="716" text-anchor="middle" font-size="10.5" fill="#92400E">🔄  Index is queried on every suggestion request</text>
+
+  <!-- ═══════════════════════════════════════════════════
+       PHASE 2 PANEL
+  ═══════════════════════════════════════════════════ -->
+  <rect x="378" y="78" width="804" height="920" rx="14" fill="#FAF5FF" stroke="#DDD6FE" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="378" y="78" width="804" height="48" rx="14" fill="#5B21B6"/>
+  <rect x="378" y="102" width="804" height="24" fill="#5B21B6"/>
+  <text x="780" y="106" text-anchor="middle" font-size="11" font-weight="700" fill="#DDD6FE" letter-spacing="2">PHASE 2</text>
+  <text x="780" y="121" text-anchor="middle" font-size="11" fill="#C4B5FD">Citation Suggestion Pipeline — 7 Stages</text>
+
+  <!-- Input Paragraph -->
+  <rect x="490" y="142" width="580" height="52" rx="10" fill="#F3E8FF" stroke="#A855F7" stroke-width="2" filter="url(#shadow)"/>
+  <text x="780" y="164" text-anchor="middle" font-size="13" font-weight="700" fill="#581C87">✍️  Your Research Paragraph</text>
+  <text x="780" y="181" text-anchor="middle" font-size="11" fill="#7C3AED">Paste the text you want to find citations for</text>
+
+  <line x1="780" y1="194" x2="780" y2="210" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Stage 1: HyDE -->
+  <rect x="490" y="213" width="580" height="82" rx="10" fill="white" stroke="#A855F7" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="490" y="213" width="7" height="82" rx="3.5" fill="#A855F7"/>
+  <circle cx="522" cy="254" r="14" fill="#A855F7"/>
+  <text x="522" y="259" text-anchor="middle" font-size="12" font-weight="700" fill="white">1</text>
+  <text x="790" y="237" text-anchor="middle" font-size="12" font-weight="600" fill="#1E1B4B">HyDE — Hypothetical Document Embeddings</text>
+  <text x="790" y="253" text-anchor="middle" font-size="10.5" fill="#64748B">LLM generates a hypothetical academic passage that would be cited</text>
+  <text x="790" y="267" text-anchor="middle" font-size="10.5" fill="#64748B">Bridges vocabulary gap between writing and paper language (+10–20% recall)</text>
+  <text x="790" y="284" text-anchor="middle" font-size="10" fill="#A855F7">Fallback: uses raw paragraph if LLM unavailable</text>
+
+  <line x1="780" y1="295" x2="780" y2="311" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Stage 2 header bar -->
+  <rect x="388" y="314" width="784" height="30" rx="6" fill="#FEF3C7" stroke="#FCD34D" stroke-width="1"/>
+  <circle cx="416" cy="329" r="13" fill="#F59E0B"/>
+  <text x="416" y="334" text-anchor="middle" font-size="12" font-weight="700" fill="white">2</text>
+  <text x="800" y="333" text-anchor="middle" font-size="11" font-weight="700" fill="#92400E">PARALLEL TRIPLE RETRIEVAL — 3 streams run concurrently</text>
+
+  <!-- Vector Search -->
+  <rect x="393" y="353" width="250" height="90" rx="10" fill="white" stroke="#FDBA74" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="393" y="353" width="7" height="90" rx="3.5" fill="#F97316"/>
+  <text x="467" y="383" text-anchor="middle" font-size="18">🔵</text>
+  <text x="556" y="381" text-anchor="middle" font-size="11" font-weight="600" fill="#7C2D12">Vector Search</text>
+  <text x="556" y="396" text-anchor="middle" font-size="10" fill="#64748B">ChromaDB · cosine sim.</text>
+  <text x="556" y="410" text-anchor="middle" font-size="10" fill="#64748B">Semantic / conceptual match</text>
+  <text x="556" y="424" text-anchor="middle" font-size="10" fill="#EA580C">threshold 0.85 · weight 1.0</text>
+  <text x="556" y="436" text-anchor="middle" font-size="10" fill="#64748B">"deep learning" ≈ "neural nets"</text>
+
+  <!-- BM25 Search -->
+  <rect x="655" y="353" width="250" height="90" rx="10" fill="white" stroke="#FDBA74" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="655" y="353" width="7" height="90" rx="3.5" fill="#F97316"/>
+  <text x="729" y="383" text-anchor="middle" font-size="18">🟠</text>
+  <text x="818" y="381" text-anchor="middle" font-size="11" font-weight="600" fill="#7C2D12">BM25 Keyword</text>
+  <text x="818" y="396" text-anchor="middle" font-size="10" fill="#64748B">SQLite FTS5 · BM25 rank</text>
+  <text x="818" y="410" text-anchor="middle" font-size="10" fill="#64748B">Exact term matching</text>
+  <text x="818" y="424" text-anchor="middle" font-size="10" fill="#EA580C">Porter stemming · weight 1.0</text>
+  <text x="818" y="436" text-anchor="middle" font-size="10" fill="#64748B">"CRISPR-Cas9" → "CRISPR-Cas9"</text>
+
+  <!-- Title Search -->
+  <rect x="917" y="353" width="250" height="90" rx="10" fill="white" stroke="#FDBA74" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="917" y="353" width="7" height="90" rx="3.5" fill="#F97316"/>
+  <text x="991" y="383" text-anchor="middle" font-size="18">🟡</text>
+  <text x="1080" y="381" text-anchor="middle" font-size="11" font-weight="600" fill="#7C2D12">Title Search</text>
+  <text x="1080" y="396" text-anchor="middle" font-size="10" fill="#64748B">SQLite · items table</text>
+  <text x="1080" y="410" text-anchor="middle" font-size="10" fill="#64748B">Topical relevance signal</text>
+  <text x="1080" y="424" text-anchor="middle" font-size="10" fill="#EA580C">weight 2.0 × (boosted)</text>
+  <text x="1080" y="436" text-anchor="middle" font-size="10" fill="#64748B">Paper-level match</text>
+
+  <!-- Converge lines → RRF -->
+  <line x1="518" y1="443" x2="518" y2="460" stroke="#94A3B8" stroke-width="1.5"/>
+  <line x1="780" y1="443" x2="780" y2="460" stroke="#94A3B8" stroke-width="1.5"/>
+  <line x1="1042" y1="443" x2="1042" y2="460" stroke="#94A3B8" stroke-width="1.5"/>
+  <line x1="518" y1="460" x2="1042" y2="460" stroke="#94A3B8" stroke-width="1.5"/>
+  <line x1="780" y1="460" x2="780" y2="476" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Stage 3: RRF -->
+  <rect x="490" y="479" width="580" height="76" rx="10" fill="white" stroke="#EA580C" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="490" y="479" width="7" height="76" rx="3.5" fill="#EA580C"/>
+  <circle cx="522" cy="517" r="14" fill="#EA580C"/>
+  <text x="522" y="522" text-anchor="middle" font-size="12" font-weight="700" fill="white">3</text>
+  <text x="790" y="503" text-anchor="middle" font-size="12" font-weight="600" fill="#1E1B4B">Weighted Reciprocal Rank Fusion (RRF)</text>
+  <text x="790" y="518" text-anchor="middle" font-size="10.5" fill="#64748B">Merges 3 ranked lists · formula: weight / (k + rank), k=60</text>
+  <text x="790" y="532" text-anchor="middle" font-size="10.5" fill="#64748B">Groups by paper · keeps top 6 chunks per paper + full metadata</text>
+  <text x="790" y="546" text-anchor="middle" font-size="10" fill="#EA580C">Rank-based — robust across different score scales</text>
+
+  <line x1="780" y1="555" x2="780" y2="571" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Stage 4: Cross-Encoder -->
+  <rect x="490" y="574" width="580" height="78" rx="10" fill="white" stroke="#16A34A" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="490" y="574" width="7" height="78" rx="3.5" fill="#16A34A"/>
+  <circle cx="522" cy="613" r="14" fill="#16A34A"/>
+  <text x="522" y="618" text-anchor="middle" font-size="12" font-weight="700" fill="white">4</text>
+  <text x="790" y="598" text-anchor="middle" font-size="12" font-weight="600" fill="#1E1B4B">Cross-Encoder Reranking</text>
+  <text x="790" y="613" text-anchor="middle" font-size="10.5" fill="#64748B">ms-marco-MiniLM-L-6-v2 (~66 MB) · Full cross-attention scoring</text>
+  <text x="790" y="627" text-anchor="middle" font-size="10.5" fill="#64748B">Scores (paragraph + evidence) pairs jointly · 1024-char context</text>
+  <text x="790" y="641" text-anchor="middle" font-size="10" fill="#16A34A">Far more accurate than cosine similarity alone</text>
+
+  <line x1="780" y1="652" x2="780" y2="668" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Stage 5: MMR -->
+  <rect x="490" y="671" width="580" height="76" rx="10" fill="white" stroke="#0891B2" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="490" y="671" width="7" height="76" rx="3.5" fill="#0891B2"/>
+  <circle cx="522" cy="709" r="14" fill="#0891B2"/>
+  <text x="522" y="714" text-anchor="middle" font-size="12" font-weight="700" fill="white">5</text>
+  <text x="790" y="695" text-anchor="middle" font-size="12" font-weight="600" fill="#1E1B4B">MMR Diversity Selection</text>
+  <text x="790" y="710" text-anchor="middle" font-size="10.5" fill="#64748B">Max Marginal Relevance · λ=0.7 (70% relevance, 30% diversity)</text>
+  <text x="790" y="724" text-anchor="middle" font-size="10.5" fill="#64748B">Prevents redundant suggestions — covers different aspects</text>
+  <text x="790" y="737" text-anchor="middle" font-size="10" fill="#0891B2">score = λ × relevance − (1−λ) × max_similarity_to_selected</text>
+
+  <line x1="780" y1="747" x2="780" y2="763" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Stage 6: LLM Evaluation -->
+  <rect x="490" y="766" width="580" height="90" rx="10" fill="white" stroke="#2563EB" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="490" y="766" width="7" height="90" rx="3.5" fill="#2563EB"/>
+  <circle cx="522" cy="811" r="14" fill="#2563EB"/>
+  <text x="522" y="816" text-anchor="middle" font-size="12" font-weight="700" fill="white">6</text>
+  <text x="790" y="790" text-anchor="middle" font-size="12" font-weight="600" fill="#1E1B4B">LLM Evaluation + Anti-Hallucination</text>
+  <text x="790" y="805" text-anchor="middle" font-size="10.5" fill="#64748B">Selects &amp; ranks sources · extracts verbatim evidence quotes</text>
+  <text x="790" y="819" text-anchor="middle" font-size="10.5" fill="#64748B">Rates confidence (High / Med / Low) + coverage (strong / partial)</text>
+  <text x="790" y="833" text-anchor="middle" font-size="10.5" fill="#64748B">item_key validation removes fabricated citations</text>
+  <text x="790" y="847" text-anchor="middle" font-size="10" fill="#2563EB">GPT-4 · Ollama (fully offline) · Kimi · any OpenAI-compatible API</text>
+
+  <line x1="780" y1="856" x2="780" y2="872" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Output -->
+  <rect x="490" y="875" width="580" height="62" rx="10" fill="#FEF9C3" stroke="#EAB308" stroke-width="2" filter="url(#shadow)"/>
+  <text x="780" y="899" text-anchor="middle" font-size="14" font-weight="700" fill="#713F12">✅  Ranked Citation Suggestions</text>
+  <text x="780" y="916" text-anchor="middle" font-size="10.5" fill="#92400E">Title · Authors · Year · DOI · Evidence Quote · Confidence Rating</text>
+  <text x="780" y="929" text-anchor="middle" font-size="10" fill="#A16207">Pre-formatted in 14 citation styles: APA, MLA, Chicago, Vancouver…</text>
+
+  <!-- Stage 7: Feedback -->
+  <rect x="546" y="948" width="210" height="36" rx="8" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1.5"/>
+  <text x="651" y="970" text-anchor="middle" font-size="12" fill="#166534">👍  Accept suggestion</text>
+  <rect x="814" y="948" width="210" height="36" rx="8" fill="#FFF1F2" stroke="#FCA5A5" stroke-width="1.5"/>
+  <text x="919" y="970" text-anchor="middle" font-size="12" fill="#9F1239">👎  Reject suggestion</text>
+  <text x="780" y="996" text-anchor="middle" font-size="10" fill="#94A3B8">Stage 7: Feedback persisted in SQLite per run · improves future rankings · click again to undo</text>
+
+  <!-- Footer -->
+  <text x="600" y="1007" text-anchor="middle" font-size="10" fill="#94A3B8">TarCite · Local-first academic citation assistant · All data and embeddings stay on your machine · Optional Ollama for fully offline use</text>
+
+</svg>

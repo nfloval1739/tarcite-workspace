@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TarCite Citation Suggestion Pipeline</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: #0a0e1a;
+    color: #e0e6f0;
+    padding: 40px 20px;
+    min-height: 100vh;
+  }
+
+  .container {
+    max-width: 920px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    text-align: center;
+    font-size: 24px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 13px;
+    color: #6b7fa3;
+    margin-bottom: 36px;
+  }
+
+  /* ── Phase labels ── */
+  .phase-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 28px 0 14px 0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #4a6a9e;
+  }
+  .phase-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, #1e3a6a, transparent);
+  }
+
+  /* ── Nodes ── */
+  .node {
+    position: relative;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 0;
+    border: 1px solid;
+  }
+
+  .node-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .node-desc {
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: #8fa3c4;
+  }
+  .node-tech {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Arrow connector ── */
+  .arrow {
+    display: flex;
+    justify-content: center;
+    padding: 6px 0;
+  }
+  .arrow svg { display: block; }
+
+  /* ── Color themes per stage type ── */
+  .stage-user {
+    background: linear-gradient(135deg, #1a2744, #162040);
+    border-color: #2d6fd4;
+  }
+  .stage-user .node-title { color: #5b9ef5; }
+  .stage-user .node-tech { background: #1b3a6e; color: #5b9ef5; }
+
+  .stage-hyde {
+    background: linear-gradient(135deg, #1a2040, #181a38);
+    border-color: #7c3aed;
+  }
+  .stage-hyde .node-title { color: #a78bfa; }
+  .stage-hyde .node-tech { background: #2e1f6e; color: #a78bfa; }
+
+  .stage-retrieval {
+    background: linear-gradient(135deg, #0f2330, #0d1f2d);
+    border-color: #0ea5e9;
+  }
+  .stage-retrieval .node-title { color: #38bdf8; }
+  .stage-retrieval .node-tech { background: #0c3a5e; color: #38bdf8; }
+
+  .stage-merge {
+    background: linear-gradient(135deg, #162030, #131c2a);
+    border-color: #6366f1;
+  }
+  .stage-merge .node-title { color: #818cf8; }
+  .stage-merge .node-tech { background: #1e2360; color: #818cf8; }
+
+  .stage-rerank {
+    background: linear-gradient(135deg, #1f1a30, #1a1530);
+    border-color: #d946ef;
+  }
+  .stage-rerank .node-title { color: #e879f9; }
+  .stage-rerank .node-tech { background: #4a1d6e; color: #e879f9; }
+
+  .stage-llm {
+    background: linear-gradient(135deg, #1a2520, #152018);
+    border-color: #10b981;
+  }
+  .stage-llm .node-title { color: #34d399; }
+  .stage-llm .node-tech { background: #0c3e2e; color: #34d399; }
+
+  .stage-feedback {
+    background: linear-gradient(135deg, #25201a, #201c15);
+    border-color: #f59e0b;
+  }
+  .stage-feedback .node-title { color: #fbbf24; }
+  .stage-feedback .node-tech { background: #4a3a0c; color: #fbbf24; }
+
+  .stage-ingest {
+    background: linear-gradient(135deg, #1c2030, #171c28);
+    border-color: #64748b;
+  }
+  .stage-ingest .node-title { color: #94a3b8; }
+  .stage-ingest .node-tech { background: #1e2a3e; color: #94a3b8; }
+
+  /* ── Parallel row ── */
+  .parallel-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+  }
+  .parallel-row .node { margin-bottom: 0; }
+
+  /* ── Fan-in / fan-out lines ── */
+  .fan-out, .fan-in {
+    display: flex;
+    justify-content: center;
+  }
+  .fan-out svg, .fan-in svg { display: block; }
+
+  /* ── Result ── */
+  .result-node {
+    background: linear-gradient(135deg, #0f2a1a, #0d2215);
+    border: 2px solid #10b981;
+    border-radius: 14px;
+    padding: 20px;
+    text-align: center;
+  }
+  .result-node .node-title {
+    font-size: 16px;
+    color: #34d399;
+  }
+  .result-node .node-desc {
+    color: #6ee7b7;
+  }
+
+  /* ── Ingestion row ── */
+  .ingest-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 0;
+  }
+
+  /* ── Number badge ── */
+  .stage-num {
+    position: absolute;
+    top: -10px;
+    left: 16px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .stage-user .stage-num { background: #2d6fd4; }
+  .stage-hyde .stage-num { background: #7c3aed; }
+  .stage-retrieval .stage-num { background: #0ea5e9; }
+  .stage-merge .stage-num { background: #6366f1; }
+  .stage-rerank .stage-num { background: #d946ef; }
+  .stage-llm .stage-num { background: #10b981; }
+  .stage-feedback .stage-num { background: #f59e0b; }
+
+  .divider {
+    border: none;
+    border-top: 1px dashed #1e3a6a;
+    margin: 32px 0;
+  }
+
+  .note {
+    font-size: 11px;
+    color: #4a5f82;
+    text-align: center;
+    margin-top: 8px;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>TarCite Citation Suggestion Pipeline</h1>
+  <p class="subtitle">From user paragraph to ranked citation suggestions — 7-stage enhanced retrieval</p>
+
+  <!-- ══════ PHASE 1: INGESTION ══════ -->
+  <div class="phase-label">Phase 1 — Document Ingestion (one-time setup)</div>
+
+  <div class="ingest-row">
+    <div class="node stage-ingest">
+      <div class="node-title">PDF Scanning</div>
+      <div class="node-desc">Scan directories for PDF, RIS, BibTeX. Extract full text &amp; metadata via PyMuPDF + Crossref API.</div>
+      <span class="node-tech">PyMuPDF</span>
+    </div>
+    <div class="node stage-ingest">
+      <div class="node-title">Text Chunking</div>
+      <div class="node-desc">Sentence-aware splitting: ~900-char chunks, 200-char overlap. Abstract + notes + fulltext.</div>
+      <span class="node-tech">Custom chunker</span>
+    </div>
+    <div class="node stage-ingest">
+      <div class="node-title">Dual Indexing</div>
+      <div class="node-desc">Embed chunks into vectors (ChromaDB) + index text for keyword search (FTS5). Store metadata in SQLite.</div>
+      <span class="node-tech">ChromaDB + FTS5</span>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- ══════ PHASE 2: QUERY PIPELINE ══════ -->
+  <div class="phase-label">Phase 2 — Citation Suggestion (per query)</div>
+
+  <!-- STAGE 0: User Input -->
+  <div class="node stage-user">
+    <div class="stage-num">0</div>
+    <div class="node-title">User Paragraph</div>
+    <div class="node-desc">Researcher pastes an academic paragraph and clicks "Suggest Citations". The app searches their local library for relevant sources.</div>
+  </div>
+
+  <div class="arrow"><svg width="20" height="28"><path d="M10 0 L10 22 M4 16 L10 22 L16 16" stroke="#5b9ef5" stroke-width="2" fill="none"/></svg></div>
+
+  <!-- STAGE 1: HyDE -->
+  <div class="node stage-hyde">
+    <div class="stage-num">1</div>
+    <div class="node-title">HyDE — Hypothetical Document Embeddings</div>
+    <div class="node-desc">The LLM generates a 2-4 sentence <em>hypothetical ideal cited passage</em> that a relevant source might contain. This passage is embedded and used as the vector search query — bridging the vocabulary gap between user language and academic paper language. Falls back to raw paragraph on failure.</div>
+    <span class="node-tech">LLM (any provider)</span>
+    <span class="node-tech">+10-20% recall</span>
+  </div>
+
+  <div class="arrow"><svg width="20" height="28"><path d="M10 0 L10 22 M4 16 L10 22 L16 16" stroke="#a78bfa" stroke-width="2" fill="none"/></svg></div>
+
+  <!-- STAGE 2: Parallel Retrieval -->
+  <div class="node stage-retrieval" style="padding-bottom:8px; border-style:dashed;">
+    <div class="stage-num">2</div>
+    <div class="node-title">Parallel Triple Retrieval</div>
+    <div class="node-desc" style="margin-bottom:12px;">Three search strategies run concurrently via ThreadPoolExecutor:</div>
+  </div>
+
+  <div class="fan-out"><svg width="400" height="30"><path d="M200 0 L60 28 M200 0 L200 28 M200 0 L340 28" stroke="#0ea5e9" stroke-width="1.5" fill="none" opacity="0.5"/></svg></div>
+
+  <div class="parallel-row">
+    <div class="node stage-retrieval">
+      <div class="node-title" style="font-size:13px;">Vector Search</div>
+      <div class="node-desc">Cosine similarity between HyDE query vector and all chunk vectors in ChromaDB. Catches conceptual similarity.</div>
+      <span class="node-tech">ChromaDB HNSW</span>
+    </div>
+    <div class="node stage-retrieval">
+      <div class="node-title" style="font-size:13px;">BM25 Keyword</div>
+      <div class="node-desc">BM25 ranking with Porter stemming over FTS5 index. Catches exact term matches like "CRISPR-Cas9".</div>
+      <span class="node-tech">SQLite FTS5</span>
+    </div>
+    <div class="node stage-retrieval">
+      <div class="node-title" style="font-size:13px;">Title Search</div>
+      <div class="node-desc">Keyword matching against paper titles. Papers with title matches get a 2x weight boost in fusion.</div>
+      <span class="node-tech">SQLite LIKE</span>
+      <span class="node-tech">2x weight</span>
+    </div>
+  </div>
+
+  <div class="fan-in"><svg width="400" height="30"><path d="M60 0 L200 28 M200 0 L200 28 M340 0 L200 28" stroke="#6366f1" stroke-width="1.5" fill="none" opacity="0.5"/></svg></div>
+
+  <!-- STAGE 3: RRF Fusion -->
+  <div class="node stage-merge">
+    <div class="stage-num">3</div>
+    <div class="node-title">Weighted Reciprocal Rank Fusion (RRF)</div>
+    <div class="node-desc">Merge three ranked lists using weighted RRF: score = sum of weight / (k + rank). Title stream gets 2x weight. Chunks are grouped by paper — keeping the best 6 chunks per paper — and enriched with SQLite metadata. Papers found only via title are included with their abstract as evidence.</div>
+    <span class="node-tech">RRF k=60</span>
+    <span class="node-tech">Title 2x</span>
+  </div>
+
+  <div class="arrow"><svg width="20" height="28"><path d="M10 0 L10 22 M4 16 L10 22 L16 16" stroke="#818cf8" stroke-width="2" fill="none"/></svg></div>
+
+  <!-- STAGE 4: Cross-Encoder -->
+  <div class="node stage-rerank">
+    <div class="stage-num">4</div>
+    <div class="node-title">Cross-Encoder Reranking</div>
+    <div class="node-desc">A CrossEncoder model scores each (paragraph, evidence) pair jointly with full cross-attention — far more accurate than bi-encoder cosine similarity. Uses up to 1024 characters of evidence per candidate. Returns top-K candidates sorted by rerank score.</div>
+    <span class="node-tech">ms-marco-MiniLM-L-6-v2</span>
+    <span class="node-tech">1024 chars</span>
+  </div>
+
+  <div class="arrow"><svg width="20" height="28"><path d="M10 0 L10 22 M4 16 L10 22 L16 16" stroke="#e879f9" stroke-width="2" fill="none"/></svg></div>
+
+  <!-- STAGE 5: MMR -->
+  <div class="node stage-rerank">
+    <div class="stage-num">5</div>
+    <div class="node-title">MMR — Max Marginal Relevance</div>
+    <div class="node-desc">Ensures diversity in the final candidate set. Each candidate is scored: λ × relevance − (1−λ) × max_similarity_to_selected. With λ=0.7, the system balances 70% relevance with 30% diversity — preventing redundant suggestions (e.g., 5 papers all saying the same thing).</div>
+    <span class="node-tech">λ = 0.7</span>
+    <span class="node-tech">cosine diversity</span>
+  </div>
+
+  <div class="arrow"><svg width="20" height="28"><path d="M10 0 L10 22 M4 16 L10 22 L16 16" stroke="#34d399" stroke-width="2" fill="none"/></svg></div>
+
+  <!-- STAGE 6: LLM Evaluation -->
+  <div class="node stage-llm">
+    <div class="stage-num">6</div>
+    <div class="node-title">LLM Evaluation &amp; Anti-Hallucination</div>
+    <div class="node-desc">The top candidates are sent to an LLM with strict instructions: select relevant sources, extract <em>verbatim</em> evidence quotes, rate confidence (High/Med/Low), and rate evidence coverage (strong/partial/single_point). Every suggested item_key is validated against the retrieved source list — fabricated citations are silently removed. Invalid JSON triggers retry with stricter prompt + repair.</div>
+    <span class="node-tech">OpenAI-compatible</span>
+    <span class="node-tech">Anti-hallucination</span>
+  </div>
+
+  <div class="arrow"><svg width="20" height="28"><path d="M10 0 L10 22 M4 16 L10 22 L16 16" stroke="#34d399" stroke-width="2" fill="none"/></svg></div>
+
+  <!-- STAGE 7: Feedback -->
+  <div class="node stage-feedback">
+    <div class="stage-num">7</div>
+    <div class="node-title">User Feedback (Thumbs)</div>
+    <div class="node-desc">Each suggestion shows thumbs up / thumbs down in the card header. Clicking an active thumb toggles it off. Feedback is persisted in SQLite per (run_id, item_key) and available for future ranking personalization.</div>
+    <span class="node-tech">SQLite persisted</span>
+    <span class="node-tech">Toggle on/off</span>
+  </div>
+
+  <div class="arrow"><svg width="20" height="28"><path d="M10 0 L10 22 M4 16 L10 22 L16 16" stroke="#fbbf24" stroke-width="2" fill="none"/></svg></div>
+
+  <!-- RESULT -->
+  <div class="result-node">
+    <div class="node-title">Ranked Citation Suggestions</div>
+    <div class="node-desc" style="margin-top:4px;">Each suggestion includes: inline citation, full reference, verbatim evidence quotes,<br>confidence rating, evidence coverage, and reason for relevance.</div>
+  </div>
+
+  <p class="note" style="margin-top:32px;">TarCite TarCite Workspace — Local-first academic citation assistant</p>
+
+</div>
+</body>
+</html>

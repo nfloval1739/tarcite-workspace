@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+           xsi:type="TaskPaneApp">
+
+  <Id>b1658ecb-8a2a-5e13-8472-5f87e5feb261</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>TarCite Workspace</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="TarCite Workspace"/>
+  <Description DefaultValue="Insert and manage citations from your local library directly within Microsoft Word."/>
+  <IconUrl DefaultValue="https://tarcite.workspace:4443/static/logo/favicon-32x32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://tarcite.workspace:4443/static/logo/android-chrome-192x192.png"/>
+  <SupportUrl DefaultValue="https://tarcite.com/"/>
+  <AppDomains>
+    <AppDomain>https://tarcite.workspace:4443</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Document"/>
+  </Hosts>
+
+  <Requirements>
+    <Sets DefaultMinVersion="1.1">
+      <Set Name="SharedRuntime" MinVersion="1.1"/>
+    </Sets>
+  </Requirements>
+
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://tarcite.workspace:4443/word-addin/taskpane.html"/>
+  </DefaultSettings>
+
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="GetStarted.LearnMoreUrl"/>
+          </GetStarted>
+          <FunctionFile resid="Commands.Url"/>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="CommandsGroup">
+                <Label resid="CommandsGroup.Label"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16x16"/>
+                  <bt:Image size="32" resid="Icon.32x32"/>
+                  <bt:Image size="80" resid="Icon.80x80"/>
+                </Icon>
+                <Control xsi:type="Button" id="TaskpaneButton">
+                  <Label resid="TaskpaneButton.Label"/>
+                  <Supertip>
+                    <Title resid="TaskpaneButton.Label"/>
+                    <Description resid="TaskpaneButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>ButtonId1</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16x16" DefaultValue="https://tarcite.workspace:4443/static/logo/favicon-16x16.png"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://tarcite.workspace:4443/static/logo/favicon-32x32.png"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://tarcite.workspace:4443/static/logo/apple-touch-icon.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://tarcite.com/"/>
+        <bt:Url id="Commands.Url" DefaultValue="https://tarcite.workspace:4443/word-addin/commands.html"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://tarcite.workspace:4443/word-addin/taskpane.html"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GetStarted.Title" DefaultValue="Welcome to TarCite Workspace!"/>
+        <bt:String id="CommandsGroup.Label" DefaultValue="TarCite Workspace"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="TarCite Workspace"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="GetStarted.Description" DefaultValue="Insert and manage citations from your local library. Click the TarCite Workspace button to get started."/>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open TarCite Workspace to insert and manage citations"/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

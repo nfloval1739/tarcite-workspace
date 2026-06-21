@@ -1,0 +1,8 @@
+# Build-time dependencies (not needed at runtime)
+# Install with: pip install -r packaging/requirements-build.txt
+
+pyinstaller>=6.0
+pystray>=0.19
+Pillow>=10.0
+# macOS DMG creation (install via homebrew: brew install create-dmg)
+# Windows installer: download Inno Setup from https://jrsoftware.org/isinfo.php
