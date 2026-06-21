@@ -1,0 +1,536 @@
+"""
+TarCite Workspace — MCP (Model Context Protocol) server.
+
+Exposes the local research library (hybrid retrieval, citation suggestion, CSL
+formatting, metadata) as MCP tools so any MCP-compatible client can use the
+user's private PDF library as a grounded, fully-local knowledge source.
+
+Two transports share this one definition:
+
+* stdio        — `python -m app.mcp_server`  (local MCP clients).
+                 Nothing touches the network.
+* streamable   — mounted at `/mcp` on the existing FastAPI app (see app/main.py),
+  HTTP           reachable at http(s)://<host>/mcp for HTTP-capable clients.
+
+Everything runs in-process against the same SQLite + ChromaDB stores the app
+already uses — no HTTP hop, no extra server. All tools are read-only.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any, Dict, List, Optional
+
+import anyio
+from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
+
+
+def _build_transport_security() -> TransportSecuritySettings:
+    """Keep DNS-rebinding protection on (the /mcp endpoint is unauthenticated),
+    but allow the app's own hostname in addition to localhost. Without this,
+    FastMCP's localhost-only default rejects clients connecting via the friendly
+    host (e.g. https://tarcite.workspace/mcp) with HTTP 421 'Invalid Host header'.
+    """
+    try:
+        from app.config import config
+
+        display = (config.app_display_host or "").strip()
+    except Exception:
+        display = ""
+
+    allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    allowed_origins = [
+        "http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*",
+        "https://127.0.0.1:*", "https://localhost:*",
+    ]
+    if display:
+        # Host header arrives without a port when served on 443; cover :port too.
+        allowed_hosts += [display, f"{display}:*"]
+        allowed_origins += [f"https://{display}", f"https://{display}:*"]
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+    )
+
+
+logger = logging.getLogger(__name__)
+
+# stateless_http + json_response keep the HTTP transport simple to embed in the
+# existing server: every call is an independent request/response with no
+# long-lived SSE session to manage. streamable_http_path="/mcp" makes FastMCP
+# build a single Route at exactly "/mcp"; app/main.py registers that route
+# directly on the main app (no sub-app Mount), so POST /mcp is served in one hop
+# with no trailing-slash redirect.
+mcp = FastMCP(
+    "TarCite Workspace",
+    instructions=(
+        "Tools for searching and citing the user's local academic library "
+        "(PDFs, metadata, annotations). Use `search_library` to find passages "
+        "relevant to a topic or claim, `suggest_citations` to get AI-ranked "
+        "citations for a paragraph being written, and `format_citation` / "
+        "`format_bibliography` to render references in a chosen style "
+        "(apa7, harvard, ieee, chicago, mla, vancouver, …)."
+    ),
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/mcp",
+    transport_security=_build_transport_security(),
+)
+
+
+# ── helpers ─────────────────────────────────────────────────────────────────
+
+
+async def _to_thread(fn, *args, **kwargs):
+    """Run a blocking (SQLite / ChromaDB / model) call off the event loop.
+
+    Keeps the shared Uvicorn loop responsive when this server is mounted on the
+    running app, and is harmless under the stdio transport.
+    """
+    if kwargs:
+        from functools import partial
+
+        fn = partial(fn, **kwargs)
+    return await anyio.to_thread.run_sync(fn, *args)
+
+
+def _creators_list(item: Dict[str, Any]) -> List[Dict]:
+    """Parse the `creators` column (JSON string or list) into dicts."""
+    from app.citation_formatter import parse_creators
+
+    return parse_creators(item.get("creators", "[]"))
+
+
+def _compact_source(source: Dict[str, Any], max_chunks: int = 3) -> Dict[str, Any]:
+    """Trim a retrieval candidate into a compact, LLM-friendly record."""
+    from app.citation_formatter import (
+        format_author_inline,
+        format_full_reference,
+        format_inline_citation,
+    )
+
+    creators = _creators_list(source)
+    chunks = []
+    for chunk in (source.get("chunks") or [])[:max_chunks]:
+        text = (chunk.get("chunk_text") or "").strip()
+        if not text:
+            continue
+        chunks.append(
+            {
+                "text": text[:800],
+                "source_type": (chunk.get("metadata") or {}).get("source_type", ""),
+                "similarity": round(chunk.get("similarity", 0.0) or 0.0, 4),
+            }
+        )
+
+    return {
+        "item_key": source.get("item_key", ""),
+        "title": source.get("title", ""),
+        "authors": format_author_inline(creators),
+        "year": source.get("year", ""),
+        "item_type": source.get("item_type", ""),
+        "publication": source.get("publication_title", ""),
+        "doi": source.get("doi", ""),
+        "inline_citation": format_inline_citation(source),
+        "full_reference": format_full_reference(source),
+        "relevance": round(source.get("rerank_score", source.get("best_similarity", 0.0)) or 0.0, 4),
+        "evidence": chunks,
+        # best_evidence is the engine's pre-computed support text and falls back
+        # to the abstract for title-only matches, so this is never empty.
+        "best_evidence": (source.get("best_evidence") or "")[:1000],
+        "abstract": (source.get("abstract") or "")[:600],
+        "citation_count": source.get("citation_count", 0) or 0,
+    }
+
+
+# ── tools ───────────────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def search_library(
+    query: str,
+    top_k: int = 10,
+    collection_key: Optional[str] = None,
+    source_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Search the user's local library for passages relevant to a topic, claim,
+    or research question, using hybrid retrieval (vector + BM25 + title) with
+    cross-encoder reranking and MMR diversity. Returns the most relevant papers
+    with supporting evidence snippets and ready-to-use citations.
+
+    Use this to ground answers in the user's own sources instead of guessing.
+
+    Args:
+        query: Topic, question, or claim to find supporting sources for.
+        top_k: Number of papers to return (1–50). Default 10.
+        collection_key: Optional collection/folder key to restrict the search.
+        source_dir: Optional reference directory path to restrict the search.
+    """
+    query = (query or "").strip()
+    if not query:
+        return {"status": "error", "message": "query cannot be empty", "results": []}
+
+    top_k = max(1, min(int(top_k or 10), 50))
+
+    from app.config import config
+    from app.retrieval import search_and_retrieve
+
+    try:
+        results = await _to_thread(
+            search_and_retrieve,
+            paragraph=query,
+            top_k=top_k,
+            collection_key=collection_key,
+            source_dir=source_dir,
+            reranker_model=config.reranker_model,
+            use_hyde=False,
+            use_mmr=True,
+        )
+    except Exception as exc:  # retrieval depends on the vector index being healthy
+        logger.exception("search_library failed")
+        return {"status": "error", "message": f"Search failed: {exc}", "results": []}
+
+    return {
+        "status": "ok",
+        "query": query,
+        "count": len(results),
+        "results": [_compact_source(source) for source in results],
+    }
+
+
+@mcp.tool()
+async def suggest_citations(
+    paragraph: str,
+    top_k: int = 10,
+    collection_key: Optional[str] = None,
+    source_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Given a paragraph the user is writing, suggest which sources from their
+    local library to cite. Runs the full citation engine: hybrid retrieval +
+    rerank, then an LLM evaluates each candidate for genuine support and returns
+    a reason, evidence points, and a confidence level per suggestion.
+
+    Note: this calls the configured language model and may take several seconds.
+    Requires the paragraph to be at least ~20 characters.
+
+    Args:
+        paragraph: The academic paragraph to find citations for.
+        top_k: Candidate pool size after reranking (1–100). Default 10.
+        collection_key: Optional collection/folder key to restrict the search.
+        source_dir: Optional reference directory path to restrict the search.
+    """
+    paragraph = (paragraph or "").strip()
+    if len(paragraph) < 20:
+        return {
+            "status": "error",
+            "message": "paragraph must be at least 20 characters",
+            "suggestions": [],
+        }
+
+    top_k = max(1, min(int(top_k or 10), 100))
+
+    from app.ai_client import QuotaExceededError
+    from app.ai_client import suggest_citations as suggest_citations_ai
+    from app.citation_formatter import (
+        format_author_inline,
+        format_full_reference,
+        format_inline_citation,
+    )
+    from app.config import config
+    from app.retrieval import search_and_retrieve
+
+    try:
+        retrieved = await _to_thread(
+            search_and_retrieve,
+            paragraph=paragraph,
+            top_k=top_k,
+            collection_key=collection_key,
+            source_dir=source_dir,
+            reranker_model=config.reranker_model,
+            use_hyde=True,
+            use_mmr=True,
+        )
+    except Exception as exc:
+        logger.exception("suggest_citations retrieval failed")
+        return {"status": "error", "message": f"Search failed: {exc}", "suggestions": []}
+
+    if not retrieved:
+        return {
+            "status": "no_results",
+            "message": "No relevant sources found in the local library.",
+            "suggestions": [],
+        }
+
+    ai_sources = []
+    for source in retrieved:
+        ai_sources.append(
+            {
+                **source,
+                "inline_citation": format_inline_citation(source),
+                "full_reference": format_full_reference(source),
+                "creators_formatted": format_author_inline(_creators_list(source)),
+            }
+        )
+
+    try:
+        ai_result = await _to_thread(suggest_citations_ai, paragraph, ai_sources)
+    except QuotaExceededError as exc:
+        return {
+            "status": "quota_exceeded",
+            "message": str(exc),
+            "suggestions": [],
+        }
+    except Exception as exc:
+        logger.exception("suggest_citations AI evaluation failed")
+        return {"status": "error", "message": f"AI evaluation failed: {exc}", "suggestions": []}
+
+    source_map = {source["item_key"]: source for source in ai_sources}
+    suggestions = []
+    for suggestion in ai_result.get("suggestions", []):
+        source = source_map.get(suggestion.get("item_key", ""), {})
+        suggestions.append(
+            {
+                "item_key": suggestion.get("item_key", ""),
+                "title": source.get("title", ""),
+                "inline_citation": source.get("inline_citation", ""),
+                "full_reference": source.get("full_reference", ""),
+                "reason": suggestion.get("reason", ""),
+                "evidence_points": suggestion.get("evidence_points", []),
+                "confidence": suggestion.get("confidence", "Low"),
+                "doi": source.get("doi", ""),
+            }
+        )
+
+    return {
+        "status": "ok",
+        "paragraph": paragraph,
+        "count": len(suggestions),
+        "suggestions": suggestions,
+        "warnings": ai_result.get("warnings", []),
+    }
+
+
+@mcp.tool()
+async def get_item(item_key: str, include_fulltext: bool = False) -> Dict[str, Any]:
+    """Fetch full metadata for a single library item by its item_key, including
+    authors, tags, files, and collections. Optionally include the extracted
+    full text of the document.
+
+    Args:
+        item_key: The item_key returned by search_library / search_metadata.
+        include_fulltext: If true, also return the extracted full text (may be large).
+    """
+    from app.database import get_fulltext_for_item, get_item_v2
+
+    item = await _to_thread(get_item_v2, item_key)
+    if not item:
+        return {"status": "not_found", "item_key": item_key}
+
+    result = {
+        "status": "ok",
+        "item_key": item_key,
+        "title": item.get("title", ""),
+        "year": item.get("year", ""),
+        "item_type": item.get("item_type", ""),
+        "publication_title": item.get("publication_title", ""),
+        "doi": item.get("doi", ""),
+        "url": item.get("url", ""),
+        "abstract": item.get("abstract", ""),
+        "creators": item.get("creators_list", []),
+        "tags": item.get("tags_list", []),
+        "collections": [c.get("name", "") for c in item.get("collections", [])],
+        "file_path": (item.get("files") or [{}])[0].get("file_path", "") if item.get("files") else item.get("file_path", ""),
+        "citation_count": item.get("citation_count", 0) or 0,
+    }
+
+    if include_fulltext:
+        rows = await _to_thread(get_fulltext_for_item, item_key)
+        result["fulltext"] = rows[0].get("content", "") if rows else ""
+        result["total_pages"] = rows[0].get("total_pages", 0) if rows else 0
+
+    return result
+
+
+@mcp.tool()
+async def search_metadata(query: str, limit: int = 15) -> Dict[str, Any]:
+    """Fast keyword lookup over library item metadata (title, authors, year,
+    filename). Cheaper than search_library — use it to resolve a known paper to
+    its item_key, not for semantic/topic search.
+
+    Args:
+        query: Keywords, author name, title fragment, or year.
+        limit: Maximum number of items to return (1–50). Default 15.
+    """
+    from app.citation_formatter import (
+        format_author_inline,
+        format_full_reference,
+        format_inline_citation,
+    )
+    from app.database import search_items
+
+    query = (query or "").strip()
+    if not query:
+        return {"status": "error", "message": "query cannot be empty", "items": []}
+
+    limit = max(1, min(int(limit or 15), 50))
+    items = await _to_thread(search_items, query, limit)
+
+    out = []
+    for item in items:
+        out.append(
+            {
+                "item_key": item.get("item_key", ""),
+                "title": item.get("title", ""),
+                "authors": format_author_inline(_creators_list(item)),
+                "year": item.get("year", ""),
+                "item_type": item.get("item_type", ""),
+                "inline_citation": format_inline_citation(item),
+                "full_reference": format_full_reference(item),
+            }
+        )
+    return {"status": "ok", "count": len(out), "items": out}
+
+
+@mcp.tool()
+async def format_citation(
+    item_key: str,
+    style: str = "apa7",
+    locator: str = "",
+    locator_type: str = "page",
+) -> Dict[str, Any]:
+    """Render a correctly-formatted in-text citation and full reference for a
+    library item in the requested style.
+
+    Args:
+        item_key: The item_key of the library item.
+        style: Citation style — one of apa7, apa6, harvard, ieee, chicago, mla,
+            vancouver, nature, acs, ama, elsevierharvard, springerauthordate.
+        locator: Optional locator value, e.g. a page number ("23").
+        locator_type: Locator type, e.g. "page" or "chapter". Default "page".
+    """
+    from app.database import get_item
+    from app.word_csl_formatter import (
+        SUPPORTED_STYLES,
+        format_inline_citation,
+        format_reference,
+    )
+
+    style = (style or "apa7").lower().replace("-", "")
+    item = await _to_thread(get_item, item_key)
+    if not item:
+        return {"status": "not_found", "item_key": item_key}
+
+    inline = await _to_thread(
+        format_inline_citation, item, style, locator, locator_type
+    )
+    reference = await _to_thread(format_reference, item, style)
+    return {
+        "status": "ok",
+        "item_key": item_key,
+        "style": style,
+        "supported_styles": SUPPORTED_STYLES,
+        "inline_citation": inline,
+        "reference": reference,
+    }
+
+
+@mcp.tool()
+async def format_bibliography(
+    item_keys: List[str], style: str = "apa7"
+) -> Dict[str, Any]:
+    """Render a formatted reference list (bibliography) for several library
+    items in the requested style.
+
+    Args:
+        item_keys: List of item_keys to include.
+        style: Citation style (apa7, harvard, ieee, chicago, mla, vancouver, …).
+    """
+    from app.database import get_item
+    from app.word_csl_formatter import SUPPORTED_STYLES, format_bibliography as _format_bib
+
+    style = (style or "apa7").lower().replace("-", "")
+    if not item_keys:
+        return {"status": "error", "message": "item_keys cannot be empty", "bibliography": ""}
+
+    items = []
+    missing = []
+    for key in item_keys:
+        item = await _to_thread(get_item, key)
+        if item:
+            items.append(item)
+        else:
+            missing.append(key)
+
+    if not items:
+        return {"status": "not_found", "missing": missing, "bibliography": ""}
+
+    bibliography = await _to_thread(_format_bib, items, style)
+    return {
+        "status": "ok",
+        "style": style,
+        "supported_styles": SUPPORTED_STYLES,
+        "count": len(items),
+        "missing": missing,
+        "bibliography": bibliography,
+    }
+
+
+@mcp.tool()
+async def list_collections() -> Dict[str, Any]:
+    """List the collections (folders) in the user's library, with their keys
+    that can be passed as `collection_key` to search_library / suggest_citations.
+    """
+    from app.database import get_collections
+
+    collections = await _to_thread(get_collections)
+    out = [
+        {
+            "collection_key": c.get("collection_key", c.get("key", "")),
+            "name": c.get("name", ""),
+        }
+        for c in collections
+    ]
+    return {"status": "ok", "count": len(out), "collections": out}
+
+
+@mcp.tool()
+async def library_stats() -> Dict[str, Any]:
+    """Return high-level statistics about the local library: number of items,
+    collections, indexed text chunks, and the last sync time. Useful to confirm
+    the library is populated before searching.
+    """
+    from app.database import get_collection_count, get_item_count, get_last_sync
+    from app.embeddings import get_collection_stats
+
+    item_count = await _to_thread(get_item_count)
+    collection_count = await _to_thread(get_collection_count)
+    last_sync = await _to_thread(get_last_sync)
+    try:
+        chunk_count = (await _to_thread(get_collection_stats)).get("total_chunks", 0)
+    except Exception:
+        chunk_count = 0
+
+    return {
+        "status": "ok",
+        "item_count": item_count,
+        "collection_count": collection_count,
+        "chunk_count": chunk_count,
+        "last_sync": dict(last_sync) if last_sync else None,
+    }
+
+
+# ── stdio entry point ───────────────────────────────────────────────────────
+
+
+def main() -> None:
+    """Run the MCP server over stdio (for local MCP clients)."""
+    logging.basicConfig(level=logging.INFO)
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()

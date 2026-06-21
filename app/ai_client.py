@@ -1,0 +1,607 @@
+"""
+AI API client for citation suggestion.
+"""
+
+import json
+import logging
+import re
+from typing import Any, Dict, List, Optional
+
+from openai import OpenAI
+
+from app.config import config, get_device_id
+from app.prompts import SYSTEM_PROMPT, build_user_prompt
+
+logger = logging.getLogger(__name__)
+
+
+class QuotaExceededError(Exception):
+    def __init__(self, message: str, buy_url: str = ""):
+        super().__init__(message)
+        self.buy_url = buy_url
+
+
+_HYDE_SYSTEM = """\
+You are an academic research assistant. Given a paragraph from a research paper, \
+generate a hypothetical passage (2-4 sentences) that a cited source might contain \
+to support the paragraph's claims. Write in formal academic English. \
+Focus on key concepts, findings, or methods that would be relevant. \
+Return ONLY the hypothetical passage text — no labels, no markdown, no explanation."""
+
+
+def generate_hypothetical_passage(paragraph: str) -> Optional[str]:
+    client = _get_client()
+    try:
+        response = _create_chat_completion(
+            client,
+            model=config.ai_model,
+            messages=[
+                {"role": "system", "content": _HYDE_SYSTEM},
+                {"role": "user", "content": f"Generate a hypothetical cited passage for this paragraph:\n\n{paragraph}"},
+            ],
+            temperature=0.3,
+            max_tokens=300,
+        )
+        content = response.choices[0].message.content or ""
+        content = content.strip()
+        if content.startswith('"') and content.endswith('"'):
+            content = content[1:-1]
+        return content if len(content) > 20 else None
+    except Exception as exc:
+        logger.warning("HyDE generation error: %s", exc)
+        return None
+
+
+def _is_managed_api(url: str) -> bool:
+    return "api.tarcite.com" in url
+
+
+def _is_local_ollama(url: str) -> bool:
+    return "localhost" in url or "127.0.0.1" in url
+
+
+def _get_client() -> OpenAI:
+    cfg = config
+    base_url = cfg.ai_api_base_url or ""
+    is_managed = _is_managed_api(base_url)
+
+    is_local = _is_local_ollama(base_url)
+    if not cfg.ai_api_key and not is_managed and not is_local:
+        raise ValueError(
+            "AI API key is not configured. Go to Settings and enter your API key."
+        )
+
+    kwargs: Dict[str, Any] = {"api_key": cfg.ai_api_key or "lm-studio"}
+    if base_url and base_url != "https://api.openai.com/v1":
+        kwargs["base_url"] = base_url.rstrip("/")
+    if is_managed:
+        kwargs["default_headers"] = {
+            "X-Device-ID": get_device_id(),
+            "User-Agent": "TarCiteWorkspace/1.0",
+            "Accept-Encoding": "identity",
+        }
+
+    return OpenAI(**kwargs)
+
+
+def _create_chat_completion(client: OpenAI, **kwargs: Any):
+    try:
+        return client.chat.completions.create(**kwargs)
+    except Exception as exc:
+        err_str = str(exc)
+        if "429" in err_str or "daily_limit_reached" in err_str:
+            import json as _json
+            try:
+                body_start = err_str.index("{")
+                body_end = err_str.rindex("}") + 1
+                err_body = _json.loads(err_str[body_start:body_end])
+                msg = err_body.get("message", "Daily limit reached. Buy credits for unlimited access.")
+                buy_url = err_body.get("buy_url", "")
+            except (ValueError, KeyError):
+                msg = "Daily limit reached. Buy credits for unlimited access."
+                buy_url = ""
+            raise QuotaExceededError(msg, buy_url) from exc
+        base_url = config.ai_api_base_url or ""
+        if _is_local_ollama(base_url):
+            err_lower = err_str.lower()
+            if any(k in err_lower for k in ("connection", "refused", "connect error", "cannot connect")):
+                raise RuntimeError(
+                    "Local AI model is not running. Please download Qwen 2.5 3B from "
+                    "Settings first, or switch to a TarCite provider (online)."
+                ) from exc
+            if "404" in err_str or "model not found" in err_lower or "not found" in err_lower:
+                model = config.ai_model or "qwen2.5:3b"
+                raise RuntimeError(
+                    f"Local AI model '{model}' is not downloaded in Ollama. Please download it from "
+                    "Settings first, or switch to a TarCite provider (online)."
+                ) from exc
+        raise
+
+
+def _is_html_response(text: str) -> bool:
+    return text.strip().startswith("<!DOCTYPE") or text.strip().startswith("<html")
+
+
+def _extract_json(content: str) -> Dict:
+    content = content.strip()
+
+    # Strip reasoning blocks (DeepSeek, etc.)
+    content = re.sub(r"<think>[\s\S]*?</think>", "", content)
+    content = re.sub(r"<think>[\s\S]*?</think>", "", content)
+    content = re.sub(r"<thinking>[\s\S]*?</thinking>", "", content)
+
+    # Strip markdown code fences
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", content)
+    if fence_match:
+        content = fence_match.group(1)
+
+    # Find the outermost JSON object
+    start = content.find("{")
+    if start == -1:
+        return json.loads(content)
+
+    depth = 0
+    end = -1
+    in_string = False
+    escape = False
+    for i in range(start, len(content)):
+        ch = content[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    if end > 0:
+        content = content[start:end]
+    else:
+        # Truncated JSON — try to close it
+        content = content[start:]
+        content = _repair_json(content)
+
+    return json.loads(content)
+
+
+def _repair_json(text: str) -> str:
+    """Attempt to repair truncated JSON by closing open strings and braces."""
+    stack = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch == "}":
+            if stack and stack[-1] == "}":
+                stack.pop()
+        elif ch == "]":
+            if stack and stack[-1] == "]":
+                stack.pop()
+
+    result = text
+    if in_string:
+        result = result.rstrip("\\") + '"'
+    while stack:
+        result += stack.pop()
+    return result
+
+
+def suggest_citations(
+    paragraph: str,
+    retrieved_sources: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    empty_result: Dict[str, Any] = {"suggestions": [], "warnings": []}
+
+    if not retrieved_sources:
+        empty_result["warnings"].append(
+            "No relevant sources found in your local library for this paragraph."
+        )
+        return empty_result
+
+    client = _get_client()
+    user_prompt = build_user_prompt(paragraph, retrieved_sources)
+
+    content = ""
+    try:
+        temp = config.suggestion_temperature
+        try:
+            response = _create_chat_completion(
+                client,
+                model=config.ai_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=temp,
+                max_tokens=4096,
+            )
+        except Exception:
+            response = _create_chat_completion(
+                client,
+                model=config.ai_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temp,
+                max_tokens=4096,
+            )
+
+        content = response.choices[0].message.content or ""
+        reasoning = (
+            getattr(response.choices[0].message, "reasoning_content", "")
+            or getattr(response.choices[0].message, "reasoning", "")
+            or ""
+        )
+
+        if not content and reasoning:
+            logger.info("Model returned reasoning_content but empty content. Using reasoning as content.")
+            content = reasoning
+
+        if not content:
+            raise ValueError("AI returned empty response")
+
+        if _is_html_response(content):
+            raise ValueError(
+                "The AI API returned an HTML page instead of a JSON response. "
+                "This usually means the API Base URL is wrong or the API key is invalid. "
+                "Please check your AI API settings (URL, key, and model name)."
+            )
+
+        try:
+            result = _extract_json(content)
+        except json.JSONDecodeError as exc:
+            logger.warning("First JSON parse failed: %s", exc)
+            logger.warning("Raw response (first 300 chars): %s", content[:300])
+            logger.info("Retrying with stricter JSON-only prompt...")
+            retry_response = _create_chat_completion(
+                client,
+                model=config.ai_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT + "\n\nIMPORTANT: Return ONLY valid JSON. Do NOT use reasoning tags, markdown, or any prose outside the JSON."},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temp,
+                max_tokens=4096,
+            )
+            retry_content = retry_response.choices[0].message.content or ""
+            retry_reasoning = (
+                getattr(retry_response.choices[0].message, "reasoning_content", "")
+                or getattr(retry_response.choices[0].message, "reasoning", "")
+                or ""
+            )
+            if not retry_content and retry_reasoning:
+                logger.info("Retry: using reasoning_content as content")
+                retry_content = retry_reasoning
+            if not retry_content:
+                raise ValueError("AI returned empty response on retry")
+            logger.info("Retry response (first 300 chars): %s", retry_content[:300])
+            result = _extract_json(retry_content)
+
+    except json.JSONDecodeError as exc:
+        logger.error("AI returned invalid JSON: %s", exc)
+        logger.error("Raw AI response (first 800 chars): %s", content[:800])
+        empty_result["warnings"].append(
+            f"AI response could not be parsed as JSON. "
+            f"This can happen with reasoning models that spend too many tokens thinking. "
+            f"Try switching to a non-reasoning model like Qwen. Error: {exc}"
+        )
+        return empty_result
+    except Exception as exc:
+        logger.error("AI API error: %s", exc)
+        raise
+
+    result.setdefault("suggestions", [])
+    result.setdefault("warnings", [])
+
+    valid_keys = {s["item_key"] for s in retrieved_sources}
+    validated: List[Dict] = []
+
+    for suggestion in result["suggestions"]:
+        key = suggestion.get("item_key", "")
+        if key in valid_keys:
+            validated.append(suggestion)
+        else:
+            warn = (
+                f"AI suggested a citation not in the retrieved source list "
+                f"(key: '{key}') — removed to prevent hallucination."
+            )
+            logger.warning(warn)
+            result["warnings"].append(warn)
+
+    result["suggestions"] = validated
+    return result
+
+
+def check_single_relevance(paragraph: str, source: Dict[str, Any]) -> Dict[str, Any]:
+    evidence = ""
+    if source.get("chunks"):
+        evidence = source["chunks"][0]["chunk_text"][:600]
+    elif source.get("abstract"):
+        evidence = source["abstract"][:600]
+
+    prompt = f"""Evaluate whether this source supports the paragraph. Be honest — if the fit is weak, say so.
+
+PARAGRAPH:
+{paragraph}
+
+SOURCE:
+  Key      : {source['item_key']}
+  Title    : {source.get('title', '')}
+  Authors  : {source.get('creators_formatted', '')}
+  Year     : {source.get('year', 'n.d.')}
+  Citation : {source.get('inline_citation', '')}
+  Evidence : {evidence if evidence else 'No text available for this item.'}
+
+Respond in this exact JSON:
+{{
+  "relevant": true or false,
+  "confidence": "High" or "Medium" or "Low",
+  "reason": "1–2 sentences explaining relevance or why it does not fit",
+  "evidence_snippet": "the most relevant passage (max 200 chars, empty string if not relevant)",
+  "inline_citation": {json.dumps(source.get('inline_citation', ''))},
+  "full_reference": {json.dumps(source.get('full_reference', ''))},
+  "item_key": {json.dumps(source['item_key'])},
+  "title": {json.dumps(source.get('title', ''))},
+  "source_type": "abstract"
+}}"""
+
+    client = _get_client()
+    try:
+        try:
+            response = _create_chat_completion(
+                client,
+                model=config.ai_model,
+                messages=[
+                    {"role": "system", "content": "You are an academic citation assistant. Evaluate source relevance honestly. Return only valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                max_tokens=600,
+            )
+        except Exception:
+            response = _create_chat_completion(
+                client,
+                model=config.ai_model,
+                messages=[
+                    {"role": "system", "content": "You are an academic citation assistant. Evaluate source relevance honestly. Return only valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=600,
+            )
+        return _extract_json(response.choices[0].message.content or "{}")
+    except Exception as exc:
+        logger.error("check_single_relevance error: %s", exc)
+        raise
+
+
+_CHAT_SYSTEM = """\
+You are an academic citation assistant helping a researcher explore their citation results.
+
+You have been given:
+  1. The paragraph the researcher wants to cite
+  2. All candidate sources retrieved from their local library (with evidence and full text where available)
+  3. The citation suggestions the AI made
+
+You can help with:
+  - Explaining why a source was or wasn't suggested
+  - Reading and evaluating a specific source from the library
+  - Comparing sources and which best supports a specific claim
+  - Analysing a particular source more deeply using its full text
+  - Advice on strengthening the citation for this paragraph
+  - Identifying gaps in the available literature
+
+When [SYSTEM CONTEXT FOR AI] notes appear in the user message, use that information
+to find and evaluate the requested source — the full text is already included in the
+candidate list above.
+
+Rules:
+  - Only discuss sources from the provided candidate list.
+  - Use only files, extracted text, paragraph context, candidates, and suggestions supplied by this app.
+  - Treat outside knowledge, web knowledge, and memory about papers as unavailable.
+  - If the app-provided sources do not contain enough evidence, say that the local app context is insufficient.
+  - Do not invent citations or authors.
+  - If a source was explicitly noted as NOT FOUND in the library, say so clearly.
+  - Be direct and academically precise.
+  - IMPORTANT: Do NOT use markdown formatting (no **bold**, no *italic*, no # headers,
+    no bullet dashes). Write in plain prose only. Use plain text like "Source:" not bold.
+  - Do NOT include source-number, line-reference, or web-style bracket markers
+    in the answer. If a source is
+    useful, name it naturally by title, author, or inline citation.\
+"""
+
+_CHAT_STANDALONE_SYSTEM = """\
+You are a research assistant embedded in a local academic citation app.
+The app has already extracted and embedded text from the user's documents into this system prompt.
+You have full read access to any document shown under "=== OPEN PDF DOCUMENT ===" or "OTHER LIBRARY SOURCES".
+Do NOT say you cannot access a PDF or file — the text is right here in this context.
+If a user asks "can you read this PDF?" or "what does this document say?", read the embedded text and answer directly.
+
+You can help with:
+  - Summarizing or explaining the open document or any library source
+  - Answering questions about specific sections, methods, results, or claims
+  - Comparing sources, finding relevant passages, or identifying gaps
+  - Normal conversation and app-use guidance
+
+Rules:
+  - The embedded document text in this prompt IS the PDF. Read it and answer from it.
+  - Do not claim you cannot access files — the content is already provided here.
+  - Only discuss sources present in this context; do not invent citations or findings.
+  - If the context truly lacks enough information, say "The extracted text does not cover that."
+  - Do NOT include source-number, line-reference, or web-style bracket markers
+    in the answer. If a source is
+    useful, name it naturally by title, author, or inline citation.
+  - Be direct and concise.\
+"""
+
+
+def chat_about_citations(
+    message: str,
+    paragraph: str,
+    candidates: List[Dict[str, Any]],
+    suggestions: List[Dict[str, Any]],
+    history: List[Dict[str, str]],
+) -> str:
+    has_paragraph = bool(paragraph)
+    has_suggestions = bool(suggestions)
+    standalone = not has_paragraph or not has_suggestions
+
+    # Separate the currently-open document from other library sources so it
+    # gets a prominent dedicated section — small local models read top-down and
+    # may miss context buried inside a generic list.
+    current_doc = next((c for c in candidates if c.get("is_current_doc")), None)
+    other_candidates = [c for c in candidates if not c.get("is_current_doc")]
+
+    current_doc_section = ""
+    if current_doc:
+        ev = current_doc.get("best_evidence", "")
+        current_doc_section = (
+            f"\n\n=== OPEN PDF DOCUMENT ===\n"
+            f"Title: {current_doc.get('title', '(untitled)')}\n"
+            f"Citation: {current_doc.get('inline_citation', '')}\n"
+            f"The full text of this document is embedded below. When the user says "
+            f"'this PDF', 'this paper', or 'the open document', they mean this document.\n"
+            + (f"--- DOCUMENT TEXT ---\n{ev}\n--- END OF DOCUMENT ---" if ev
+               else "(No extracted text available for this document.)")
+        )
+
+    cand_lines = ""
+    for i, c in enumerate(other_candidates[:14], 1):
+        cand_lines += f"\n[{i}] {c.get('inline_citation', '')} | {c.get('title', '')[:70]}"
+        ev = c.get("best_evidence", "")
+        if ev:
+            cand_lines += f"\n    Evidence: {ev[:8000]}"
+        fts_chunks = c.get("fts_chunks", [])
+        for chunk in fts_chunks[:3]:
+            cand_lines += f"\n    Excerpt: {chunk[:600]}"
+
+    sug_lines = ""
+    for s in suggestions:
+        sug_lines += f"\n  - {s.get('inline_citation', '')} (confidence: {s.get('confidence', '')})"
+
+    other_sources_label = f"\n\nOTHER LIBRARY SOURCES ({len(other_candidates)} found):{cand_lines if cand_lines else ' None.'}"
+
+    if standalone:
+        system = (
+            _CHAT_STANDALONE_SYSTEM
+            + current_doc_section
+            + other_sources_label
+        )
+    else:
+        system = (
+            _CHAT_SYSTEM
+            + current_doc_section
+            + f"\n\nPARAGRAPH:\n{paragraph}"
+            + f"\n\nCANDIDATE SOURCES ({len(other_candidates)} retrieved):{cand_lines if cand_lines else ' None.'}"
+            + f"\n\nSUGGESTIONS MADE:{sug_lines if sug_lines else ' None.'}"
+        )
+
+    messages = [{"role": "system", "content": system}]
+    for h in history[-8:]:
+        messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": message})
+
+    client = _get_client()
+    try:
+        response = _create_chat_completion(
+            client,
+            model=config.ai_model,
+            messages=messages,
+            temperature=config.chat_temperature,
+            max_tokens=2000,
+        )
+        raw = response.choices[0].message.content or ""
+        return _clean_chat_response(_deduplicate_chat_response(raw))
+    except Exception as exc:
+        logger.error("chat_about_citations error: %s", exc)
+        raise
+
+
+def _clean_chat_response(text: str) -> str:
+    if not text:
+        return text
+
+    cleaned = text
+    # Remove model-generated source and line citation artifacts.
+    cleaned = re.sub(r"【\s*\d+\s*†\s*L?\d+(?:\s*[-–]\s*L?\d+)?\s*】", "", cleaned)
+    # Remove malformed/truncated variants that can appear after narrow UI wrapping.
+    cleaned = re.sub(r"【\s*\d+\s*†\s*L?\d+(?:\s*[-–]\s*L?\d+)?", "", cleaned)
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _deduplicate_chat_response(text: str) -> str:
+    if not text:
+        return text
+
+    paragraphs = text.split("\n\n")
+    if len(paragraphs) < 4:
+        return text
+
+    def _normalize(s: str) -> str:
+        return re.sub(r"[\*\#_\-\`]", "", s).lower().strip()
+
+    norm_paragraphs = [_normalize(p) for p in paragraphs]
+
+    best_split = -1
+    for split_point in range(2, len(paragraphs) - 1):
+        first_block = " ".join(norm_paragraphs[:split_point])
+        second_block = " ".join(norm_paragraphs[split_point:])
+
+        first_words = first_block.split()[:12]
+        second_words = second_block.split()[:12]
+
+        if len(first_words) >= 6 and len(second_words) >= 6:
+            overlap = sum(1 for a, b in zip(first_words, second_words) if a == b)
+            if overlap >= 6:
+                best_split = split_point
+                break
+
+    if best_split > 0:
+        logger.info("Chat response duplicated at paragraph %d — keeping second copy", best_split)
+        return "\n\n".join(paragraphs[best_split:])
+
+    half = len(paragraphs) // 2
+    first_half = " ".join(norm_paragraphs[:half])
+    second_half = " ".join(norm_paragraphs[half:])
+
+    first_words = first_half.split()[:20]
+    second_words = second_half.split()[:20]
+
+    if len(first_words) >= 8 and len(second_words) >= 8:
+        overlap = sum(1 for a, b in zip(first_words, second_words) if a == b)
+        if overlap >= 8:
+            logger.info("Chat response duplicated at midpoint — keeping second copy")
+            return "\n\n".join(paragraphs[half:])
+
+    return text

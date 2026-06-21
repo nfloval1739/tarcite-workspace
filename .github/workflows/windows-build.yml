@@ -1,0 +1,90 @@
+name: Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Add Inno Setup to PATH
+        shell: pwsh
+        run: echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+
+      - name: Build Windows app and installer
+        shell: cmd
+        # NOTE: GitHub Releases has a 2 GB per-file limit on free accounts.
+        # The full bundle (~3-4 GB) cannot be uploaded as a release asset.
+        # Build MINIMAL here; build the FULL bundle locally on a real Windows PC.
+        env:
+          BUILD_VARIANT: minimal
+        run: packaging\build_windows.bat
+
+      - name: Publish Windows installer release asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: windows-latest
+          RELEASE_TITLE: TarCite Windows Latest
+          ASSET_PATH: dist\TarCiteWorkspace_minimal-Setup.exe
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Invoke-Gh {
+            gh @args
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh $($args -join ' ') failed with exit code $LASTEXITCODE"
+            }
+          }
+
+          if (!(Test-Path $env:ASSET_PATH)) {
+            throw "Installer not found: $env:ASSET_PATH"
+          }
+
+          $notes = @"
+          Latest Windows installer built from $env:GITHUB_SHA.
+
+          **This is the MINIMAL installer** (~200 MB). AI models are downloaded on first run.
+          For the FULL offline installer (models bundled, ~3-4 GB), build locally:
+            packaging\build_windows.bat
+
+          Windows may show "Unknown publisher" because the installer is not yet code-signed.
+          See docs/WINDOWS_INSTALL_HELP.md for safe installation steps.
+          "@
+
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Invoke-Gh release create $env:RELEASE_TAG $env:ASSET_PATH `
+              --target $env:GITHUB_SHA `
+              --title $env:RELEASE_TITLE `
+              --notes $notes `
+              --prerelease
+          } else {
+            Invoke-Gh release upload $env:RELEASE_TAG $env:ASSET_PATH --clobber
+            Invoke-Gh release edit $env:RELEASE_TAG `
+              --target $env:GITHUB_SHA `
+              --title $env:RELEASE_TITLE `
+              --notes $notes `
+              --prerelease
+          }

@@ -1,0 +1,192 @@
+@echo off
+REM Build TarCite Workspace for Windows
+REM Run from the project root: packaging\build_windows.bat
+REM
+REM Environment variables:
+REM   BUILD_VARIANT=minimal    → build minimal only (no bundled models)
+REM   SIGNTOOL=1               → sign the installer (requires cert configured in setup.iss)
+REM   CI=1                     → non-interactive mode (no pause on error)
+
+setlocal EnableDelayedExpansion
+
+cd /d "%~dp0.."
+echo === TarCite Workspace - Windows Build ===
+echo.
+
+REM --- 0. Determine build variant -------------------------------------------
+set "MINIMAL_ONLY=0"
+if /I "%BUILD_VARIANT%"=="minimal" set "MINIMAL_ONLY=1"
+if "%BUILD_MINIMAL_ONLY%"=="1" set "MINIMAL_ONLY=1"
+
+if "%MINIMAL_ONLY%"=="1" (
+    echo Variant : MINIMAL (no bundled models)
+) else (
+    echo Variant : FULL (models + Ollama + qwen2.5:3b bundled)
+)
+echo.
+
+REM --- 1. Build dependencies ------------------------------------------------
+echo [1/6] Installing app and build dependencies...
+python -m pip install -r requirements.txt -q
+if errorlevel 1 (
+    echo ERROR: Failed to install app dependencies.
+    if not defined CI pause
+    exit /b 1
+)
+python -m pip install -r packaging\requirements-build.txt -q
+if errorlevel 1 (
+    echo ERROR: Failed to install build dependencies.
+    if not defined CI pause
+    exit /b 1
+)
+python -m pip install pystray Pillow -q
+
+REM --- 2. Pre-download HF embedding/reranker models -------------------------
+if "%MINIMAL_ONLY%"=="1" (
+    echo [2/6] Skipping bundled ML models for minimal build.
+) else (
+    if not exist "packaging\models" (
+        echo [2/6] Downloading ML models - one-time, about 1.5 GB...
+        python packaging\download_models.py
+        if errorlevel 1 (
+            echo ERROR: Model download failed.
+            if not defined CI pause
+            exit /b 1
+        )
+    ) else (
+        echo [2/6] ML models already present -- skipping download.
+    )
+)
+
+REM --- 3. Download Ollama binary + pre-pull qwen2.5:3b ---------------------
+if "%MINIMAL_ONLY%"=="1" (
+    echo [3/6] Skipping bundled Ollama for minimal build.
+) else (
+    if not exist "packaging\ollama_win\ollama.exe" (
+        echo [3/6] Downloading Ollama + qwen2.5:3b model - one-time, about 2 GB...
+        call packaging\download_ollama.bat
+        if errorlevel 1 (
+            echo ERROR: Ollama download failed.
+            if not defined CI pause
+            exit /b 1
+        )
+    ) else (
+        echo [3/6] Ollama already present -- skipping download.
+    )
+    if exist "packaging\ollama_models" (
+        echo     Removing incomplete Ollama partial blobs before packaging...
+        del /s /q "packaging\ollama_models\*partial*" >nul 2>nul
+    )
+)
+
+REM --- 4. Clean old dist ----------------------------------------------------
+echo [4/6] Cleaning previous build artifacts...
+if exist "dist\TarCiteWorkspace" (
+    rmdir /s /q "dist\TarCiteWorkspace" >nul 2>nul
+)
+if exist "dist\minimal" (
+    rmdir /s /q "dist\minimal" >nul 2>nul
+)
+
+REM --- 5. Run PyInstaller ---------------------------------------------------
+echo [5/6] Running PyInstaller...
+pyinstaller citation.spec --clean --noconfirm
+if errorlevel 1 (
+    echo ERROR: PyInstaller failed.
+    if not defined CI pause
+    exit /b 1
+)
+if exist "dist\TarCiteWorkspace\_internal\ollama_models" (
+    echo     Removing incomplete Ollama partial blobs from app bundle...
+    del /s /q "dist\TarCiteWorkspace\_internal\ollama_models\*partial*" >nul 2>nul
+)
+if exist "dist\TarCiteWorkspace\ollama_models" (
+    echo     Removing incomplete Ollama partial blobs from app bundle...
+    del /s /q "dist\TarCiteWorkspace\ollama_models\*partial*" >nul 2>nul
+)
+
+REM --- 6. Create installer with Inno Setup ----------------------------------
+echo [6/6] Creating Windows installer...
+where iscc >nul 2>nul
+if %errorlevel% neq 0 (
+    echo WARNING: Inno Setup not found. Download from https://jrsoftware.org/isinfo.php
+    echo The app folder is ready at: dist\TarCiteWorkspace\
+    if not defined CI pause
+    exit /b 1
+)
+
+REM Full installer
+iscc packaging\setup.iss
+if errorlevel 1 (
+    echo WARNING: Inno Setup failed for full build.
+    if not defined CI pause
+    exit /b 1
+)
+
+echo.
+echo === Full installer created: dist\TarCiteWorkspace-Setup.exe ===
+
+REM --- 7. Optional: sign the installer --------------------------------------
+if "%SIGNTOOL%"=="1" (
+    echo.
+    echo --- Attempting to sign installer ---
+    where signtool >nul 2>nul
+    if %errorlevel% equ 0 (
+        signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td sha256 /a "dist\TarCiteWorkspace-Setup.exe"
+        if errorlevel 1 (
+            echo WARNING: Signing failed. Make sure a code signing certificate is installed.
+        ) else (
+            echo Installer signed successfully.
+        )
+    ) else (
+        echo WARNING: signtool.exe not found. Install Windows SDK to enable signing.
+    )
+) else (
+    echo.
+    echo NOTE: Installer is NOT signed. Windows SmartScreen will show "Unknown publisher".
+    echo To add signing, set SIGNTOOL=1 and install a code signing certificate.
+)
+
+REM --- 8. Create MINIMAL installer (always, from the full build) ------------
+echo.
+echo === Building MINIMAL version (no bundled models) ===
+set "MINIMAL_STAGE=dist\minimal\TarCite Workspace"
+
+if exist "dist\minimal" rmdir /s /q "dist\minimal"
+mkdir "dist\minimal"
+xcopy /E /I /Q "dist\TarCiteWorkspace" "%MINIMAL_STAGE%"
+
+REM Strip models
+if exist "%MINIMAL_STAGE%\models"                 rmdir /s /q "%MINIMAL_STAGE%\models"
+if exist "%MINIMAL_STAGE%\ollama_models"           rmdir /s /q "%MINIMAL_STAGE%\ollama_models"
+if exist "%MINIMAL_STAGE%\_internal\models"        rmdir /s /q "%MINIMAL_STAGE%\_internal\models"
+if exist "%MINIMAL_STAGE%\_internal\ollama_models" rmdir /s /q "%MINIMAL_STAGE%\_internal\ollama_models"
+echo     Models stripped from minimal build.
+
+iscc packaging\setup.iss /DSrcDir="..\dist\minimal\TarCite Workspace" /DOutputBase="TarCiteWorkspace_minimal-Setup"
+if errorlevel 1 (
+    echo WARNING: Inno Setup failed for minimal build.
+) else (
+    echo === Minimal installer created: dist\TarCiteWorkspace_minimal-Setup.exe ===
+)
+
+if "%SIGNTOOL%"=="1" (
+    where signtool >nul 2>nul
+    if %errorlevel% equ 0 (
+        signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td sha256 /a "dist\TarCiteWorkspace_minimal-Setup.exe" >nul 2>&1
+        if errorlevel 0 echo Minimal installer signed successfully.
+    )
+)
+
+echo.
+echo === BUILD COMPLETE ===
+echo Full installer    : %cd%\dist\TarCiteWorkspace-Setup.exe
+echo Minimal installer : %cd%\dist\TarCiteWorkspace_minimal-Setup.exe
+echo.
+echo Next steps:
+echo 1. Test the installer on a clean Windows machine (or VM).
+echo 2. If you have a code signing certificate, run: set SIGNTOOL=1 ^&^& packaging\build_windows.bat
+echo 3. Upload dist\*.exe to your release channel.
+
+if not defined CI pause
+endlocal

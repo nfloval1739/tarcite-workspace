@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+!app/static/pdfjs/
+!app/static/pdfjs/build/
+!app/static/pdfjs/build/pdf.mjs
+!app/static/pdfjs/build/pdf.worker.mjs
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# Packaging / release artifacts (generated at build time, not committed)
+.pyinstaller-cache/
+.tmp/
+mac-build*.out
+release/
+*.dmg
+*.exe
+packaging/models/
+packaging/ollama/
+packaging/ollama_mac/
+packaging/ollama_win/
+packaging/ollama_linux/
+packaging/ollama_models/
+packaging/*.icns
+packaging/*.iconset
+packaging/__pycache__/
+
+# Local AI assistant / agent tooling (not part of the project)
+.claude/
+.cursor/
+.aider*
+.continue/
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+
+# Misc local notes
+*.rtf
