@@ -3,8 +3,8 @@
 set -e
 cd "$(dirname "$0")/.."
 
-CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: Your Name (TEAMID)}"
-APPLE_TEAM_ID="${APPLE_TEAM_ID:-TEAMID}"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: PT. DIGITAL ENGINERING INDONESIA (8XBP4MRL6L)}"
+APPLE_TEAM_ID="${APPLE_TEAM_ID:-8XBP4MRL6L}"
 MINIMAL_STAGE="dist/minimal"
 MINIMAL_APP="$MINIMAL_STAGE/TarCiteWorkspace.app"
 MINIMAL_DMG="dist/TarCiteWorkspace_minimal-mac.dmg"

@@ -6,8 +6,8 @@ set -e
 cd "$(dirname "$0")/.."
 
 # ── Signing identity (Developer ID Application cert in login keychain) ────────
-CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: Your Name (TEAMID)}"
-APPLE_TEAM_ID="${APPLE_TEAM_ID:-TEAMID}"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: PT. DIGITAL ENGINERING INDONESIA (8XBP4MRL6L)}"
+APPLE_TEAM_ID="${APPLE_TEAM_ID:-8XBP4MRL6L}"
 # For notarization, set APPLE_ID and APPLE_APP_PASSWORD (app-specific password):
 #   export APPLE_ID="your@email.com"
 #   export APPLE_APP_PASSWORD="xxxx-xxxx-xxxx-xxxx"
