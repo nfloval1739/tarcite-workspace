@@ -101,7 +101,7 @@ function initFileUpload() {
         dropZone.addEventListener('drop', e => {
             const files = e.dataTransfer.files;
             if (files.length > 0) {
-                openUploadModal(files[0]);
+                openUploadModal(files);
             }
         });
     }
@@ -149,14 +149,21 @@ function initFileUpload() {
         uploadBtn.addEventListener('click', () => doUpload());
     }
 
-    window.openUploadModal = function(prefillFile) {
+    function normaliseUploadFiles(value) {
+        if (!value) return [];
+        if (value.name && value.size !== undefined) return [value];
+        return Array.from(value).filter(file => file && file.name && file.size !== undefined);
+    }
+
+    window.openUploadModal = function(prefillFiles) {
         // Pre-select the folder the user is currently viewing, so they don't
         // have to re-navigate to where they already are.
         populateUploadDirs(appState.activeSourceDir || '', appState.activeCollectionKey || '');
         fileInput.value = '';
-        if (prefillFile) {
+        const files = normaliseUploadFiles(prefillFiles);
+        if (files.length > 0) {
             const dt = new DataTransfer();
-            dt.items.add(prefillFile);
+            files.forEach(file => dt.items.add(file));
             fileInput.files = dt.files;
         }
         setInlineResult('upload-msg', '');
@@ -215,15 +222,20 @@ function initFileUpload() {
     }
 
     async function doUpload() {
-        const file = fileInput.files[0];
+        const files = Array.from(fileInput.files || []);
         const allowedExtensions = ['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.tif', '.ris', '.bib', '.bibtex', '.txt', '.md', '.markdown', '.csv', '.docx'];
-        const lowerName = file ? file.name.toLowerCase() : '';
-        if (!file) {
-            setInlineResult('upload-msg', 'Select a file to upload.', 'error');
+        if (files.length === 0) {
+            setInlineResult('upload-msg', 'Select one or more files to upload.', 'error');
             return;
         }
-        if (!allowedExtensions.some(ext => lowerName.endsWith(ext))) {
-            setInlineResult('upload-msg', 'Supported: PDF, images (PNG/JPG/WebP/GIF/BMP/TIFF), RIS, BibTeX, TXT, MD, CSV, DOCX.', 'error');
+        const unsupported = files.filter(file => {
+            const lowerName = file.name.toLowerCase();
+            return !allowedExtensions.some(ext => lowerName.endsWith(ext));
+        });
+        if (unsupported.length > 0) {
+            const names = unsupported.slice(0, 3).map(file => file.name).join(', ');
+            const extra = unsupported.length > 3 ? ` and ${unsupported.length - 3} more` : '';
+            setInlineResult('upload-msg', `Unsupported file type: ${names}${extra}. Supported: PDF, images (PNG/JPG/WebP/GIF/BMP/TIFF), RIS, BibTeX, TXT, MD, CSV, DOCX.`, 'error');
             return;
         }
         const targetDir = dirSelect.value;
@@ -234,19 +246,23 @@ function initFileUpload() {
         const subfolder = subfolderSelect.value;
         const finalDir = subfolder ? `${targetDir}/${subfolder}` : targetDir;
 
-        setInlineResult('upload-msg', 'Uploading...');
+        setInlineResult('upload-msg', files.length === 1 ? 'Uploading file...' : `Uploading ${files.length} files...`);
         uploadBtn.disabled = true;
 
         try {
             const formData = new FormData();
-            formData.append('file', file);
-            const res = await fetch(`/api/upload-file?target_dir=${encodeURIComponent(finalDir)}`, {
+            files.forEach(file => formData.append('files', file));
+            const res = await fetch(`/api/upload-files?target_dir=${encodeURIComponent(finalDir)}`, {
                 method: 'POST',
                 body: formData,
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Upload failed');
-            setInlineResult('upload-msg', 'File saved — indexing in background…', 'success');
+            const savedCount = data.count || files.length;
+
+            loadLibraryTree({ force: true });
+            loadLibraryItems();
+            setInlineResult('upload-msg', `${savedCount} file${savedCount === 1 ? '' : 's'} saved — indexing in background…`, 'success');
             fileInput.value = '';
             setTimeout(() => {
                 closeModal('upload-modal');
@@ -358,6 +374,7 @@ function renderCollectionNode(col, sourceDir, depth) {
     const hasChildren = col.children && col.children.length > 0;
     const isActive = appState.activeCollectionKey === col.collection_key;
     const isExpanded = appState.expandedCollections.has(col.collection_key);
+    const localPath = col.local_path || '';
 
     return `<div class="tree-folder-group">
         <div class="tree-item tree-collection ${isActive ? 'active' : ''}"
@@ -372,6 +389,7 @@ function renderCollectionNode(col, sourceDir, depth) {
             <div class="tree-icon">${icon('folder')}</div>
             <div class="tree-label"><span>${escapeHtml(col.name)}</span></div>
             <span class="count">${col.item_count || 0}</span>
+            ${localPath ? `<button class="tree-sync-btn" onclick="event.stopPropagation(); startSync('${escapeJs(localPath)}')" title="Scan this folder" aria-label="Scan">${icon('refresh-cw')}</button>` : ''}
             <button class="tree-ctx-btn" onclick="event.stopPropagation(); showFolderContextMenu(event, '${escapeJs(sourceDir)}', false, '${escapeJs(col.collection_key)}', '${escapeJs(col.name)}')" title="More actions" aria-label="More">${icon('more-vertical')}</button>
         </div>
         ${hasChildren ? `<div class="tree-children ${isExpanded ? '' : 'hidden'}">
@@ -1973,7 +1991,8 @@ function showFolderContextMenu(event, sourceDir, isRootDir, collectionKey, colle
 
         menu.innerHTML = `
             <button class="ctx-item" onclick="hideContextMenu(); createFolderIn('${escapeJs(colPath)}')">${icon('folder-plus')} <span>New Subfolder</span></button>
-            <button class="ctx-item" onclick="hideContextMenu(); renameFolder('${escapeJs(colPath)}', '${escapeJs(collectionName || '')}')">${icon('pencil')} <span>Rename</span></button>
+            <button class="ctx-item" onclick="hideContextMenu(); startSync('${escapeJs(colPath)}')">${icon('refresh-cw')} <span>Scan Folder</span></button>
+            <button class="ctx-item" onclick="hideContextMenu(); renameFolder('${escapeJs(colPath)}', '${escapeJs(collectionName || '')}', '${escapeJs(collectionKey || '')}')">${icon('pencil')} <span>Rename</span></button>
             <button class="ctx-item" onclick="hideContextMenu(); moveFolderTo('${escapeJs(colPath)}')">${icon('corner-down-right')} <span>Move To…</span></button>
             <button class="ctx-item" onclick="hideContextMenu(); openInFileManager('${escapeJs(colPath)}')">${icon('external-link')} <span>Open in File Manager</span></button>
             <div class="ctx-sep"></div>
@@ -2130,23 +2149,34 @@ async function createFolderIn(parentPath) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to create folder');
-        loadLibraryTree({ force: true });
+        if (data.source_dir) appState.expandedDirs.add(data.source_dir);
+        if (data.parent_collection_key) appState.expandedCollections.add(data.parent_collection_key);
+        if (data.collection_key) appState.expandedCollections.add(data.collection_key);
+        await loadLibraryTree({ force: true });
     } catch (err) {
         alert('Error: ' + err.message);
     }
 }
 
-async function renameFolder(folderPath, currentName) {
+async function renameFolder(folderPath, currentName, collectionKey = '') {
     const newName = prompt('Rename folder:', currentName);
     if (!newName || !newName.trim() || newName.trim() === currentName) return;
     try {
         const res = await fetch('/api/folders/rename', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folder_path: folderPath, new_name: newName.trim() }),
+            body: JSON.stringify({ folder_path: folderPath, new_name: newName.trim(), collection_key: collectionKey }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to rename folder');
+        if (data.source_dir) appState.expandedDirs.add(data.source_dir);
+        if (data.parent_collection_key) appState.expandedCollections.add(data.parent_collection_key);
+        if (data.new_collection_key) {
+            appState.expandedCollections.add(data.new_collection_key);
+            if (appState.activeCollectionKey === (data.old_collection_key || collectionKey)) {
+                appState.activeCollectionKey = data.new_collection_key;
+            }
+        }
         await loadLibraryTree({ force: true });
         await loadLibraryItems();
     } catch (err) {
@@ -2164,6 +2194,7 @@ async function deleteFolder(folderPath) {
             body: JSON.stringify({ folder_path: folderPath, delete_contents: false }),
         });
         const data = await res.json();
+        let dataFinal = data;
         if (!res.ok) {
             if (data.detail && data.detail.includes('not empty')) {
                 const confirmDelete = confirm(`Folder "${name}" is not empty. Delete folder and ALL its contents?`);
@@ -2175,9 +2206,22 @@ async function deleteFolder(folderPath) {
                 });
                 const data2 = await res2.json();
                 if (!res2.ok) throw new Error(data2.detail || 'Failed to delete folder');
+                dataFinal = data2;
             } else {
                 throw new Error(data.detail || 'Failed to delete folder');
             }
+        }
+        const activePath = appState.activeCollectionKey
+            ? _resolveCollectionPath(appState.activeSourceDir, appState.activeCollectionKey, '')
+            : '';
+        if (
+            appState.activeCollectionKey &&
+            (appState.activeCollectionKey === dataFinal.deleted_collection_key ||
+             activePath === folderPath ||
+             activePath.startsWith(folderPath + '/'))
+        ) {
+            appState.activeCollectionKey = '';
+            appState.activeSourceDir = dataFinal.source_dir || appState.activeSourceDir || '';
         }
         await loadLibraryTree({ force: true });
         await loadLibraryItems();
@@ -2215,6 +2259,15 @@ async function moveFolderTo(folderPath) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to move folder');
+        if (data.source_dir) appState.expandedDirs.add(data.source_dir);
+        if (data.parent_collection_key) appState.expandedCollections.add(data.parent_collection_key);
+        if (data.new_collection_key) {
+            appState.expandedCollections.add(data.new_collection_key);
+            if (appState.activeCollectionKey === data.old_collection_key) {
+                appState.activeCollectionKey = data.new_collection_key;
+                appState.activeSourceDir = data.source_dir || appState.activeSourceDir;
+            }
+        }
         await loadLibraryTree({ force: true });
         await loadLibraryItems();
     } catch (err) {
@@ -2295,10 +2348,40 @@ function showFolderPickerModal(title) {
         const input = document.getElementById('picker-target-path');
         const existingDiv = document.getElementById('picker-existing');
 
-        const dirs = appState.settings?.reference_dirs || [];
+        const suggestions = [];
+        (appState.libraryTreeData || []).forEach(d => {
+            const rootPath = d.normalized_path || d.path || d.source_dir || '';
+            if (!rootPath) return;
+            suggestions.push({
+                path: rootPath,
+                label: d.label || (rootPath.split('/').pop() || rootPath),
+                depth: 0,
+            });
+            const walk = (collections, depth) => {
+                (collections || []).forEach(col => {
+                    if (col.local_path) {
+                        suggestions.push({ path: col.local_path, label: col.name || col.local_path, depth });
+                    }
+                    if (col.children && col.children.length > 0) walk(col.children, depth + 1);
+                });
+            };
+            walk(d.collections || [], 1);
+        });
+
+        const dirs = suggestions.length > 0
+            ? suggestions
+            : (appState.settings?.reference_dirs || []).map(d => ({
+                path: d.path,
+                label: d.label || d.path,
+                depth: 0,
+            }));
+
         if (dirs.length > 0) {
             existingDiv.innerHTML = '<label class="settings-label" style="margin-bottom:6px;">Or pick a library folder:</label>' +
-                dirs.map(d => `<button class="dir-suggestion" data-dir="${escapeHtml(d.path)}">${escapeHtml(d.label || d.path)}</button>`).join('');
+                dirs.map(d => {
+                    const indent = '&nbsp;'.repeat((d.depth || 0) * 4);
+                    return `<button class="dir-suggestion" data-dir="${escapeHtml(d.path)}">${indent}${escapeHtml(d.label || d.path)}</button>`;
+                }).join('');
             existingDiv.querySelectorAll('.dir-suggestion').forEach(btn => {
                 btn.addEventListener('click', () => { input.value = btn.dataset.dir; });
             });

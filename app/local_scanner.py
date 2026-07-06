@@ -85,7 +85,12 @@ def get_subfolders(root: Path) -> List[Dict[str, Any]]:
 MAX_SUBFOLDER_DEPTH = 10
 
 
-def get_subfolders_recursive(root: Path) -> List[Dict[str, Any]]:
+def get_subfolders_recursive(
+    root: Path,
+    parent_key: str = "",
+    rel_prefix: str = "",
+    start_depth: int = 0,
+) -> List[Dict[str, Any]]:
     """Recursively discover all subfolders with proper parent-child hierarchy."""
     folders: List[Dict[str, Any]] = []
     seen: set = set()
@@ -114,7 +119,41 @@ def get_subfolders_recursive(root: Path) -> List[Dict[str, Any]]:
         except Exception as exc:
             logger.error("Error listing subfolders of %s: %s", dir_path, exc)
 
-    _walk(root, "", "", 0)
+    _walk(root, parent_key, rel_prefix, start_depth)
+    return folders
+
+
+def _collection_chain_for_scan_root(library_root: Path, scan_root: Path) -> List[Dict[str, Any]]:
+    """Return ancestor collection rows from the library root down to scan_root."""
+    if scan_root == library_root:
+        return []
+    try:
+        scan_root.relative_to(library_root)
+    except ValueError:
+        return []
+
+    paths: List[Path] = []
+    current = scan_root
+    while current != library_root:
+        paths.append(current)
+        current = current.parent
+    paths.reverse()
+
+    folders: List[Dict[str, Any]] = []
+    parent_key = ""
+    rel_parts: List[str] = []
+    for depth, folder_path in enumerate(paths):
+        col_key = hashlib.md5(str(folder_path).encode()).hexdigest()[:12]
+        rel_parts.append(folder_path.name)
+        folders.append({
+            "collection_key": col_key,
+            "name": folder_path.name,
+            "parent_key": parent_key,
+            "path": str(folder_path),
+            "rel_path": "/".join(rel_parts),
+            "depth": depth,
+        })
+        parent_key = col_key
     return folders
 
 
@@ -1448,12 +1487,27 @@ def extract_docx_metadata(file_path: Path) -> Dict[str, Any]:
     return item
 
 
-def scan_directory(dir_path: str, progress_callback=None) -> Tuple[List[Dict], List[Dict]]:
+def scan_directory(
+    dir_path: str,
+    progress_callback=None,
+    library_root: Optional[str] = None,
+) -> Tuple[List[Dict], List[Dict]]:
     root = Path(dir_path).expanduser().resolve()
     if not root.exists() or not root.is_dir():
         raise ValueError(f"Invalid directory: {dir_path}")
 
-    collections = get_subfolders_recursive(root)
+    library_root_path = Path(library_root).expanduser().resolve() if library_root else root
+    root_chain = _collection_chain_for_scan_root(library_root_path, root)
+    root_parent_key = root_chain[-1]["collection_key"] if root_chain else ""
+    root_rel_prefix = root_chain[-1]["rel_path"] if root_chain else ""
+    root_start_depth = (root_chain[-1]["depth"] + 1) if root_chain else 0
+
+    collections = root_chain + get_subfolders_recursive(
+        root,
+        parent_key=root_parent_key,
+        rel_prefix=root_rel_prefix,
+        start_depth=root_start_depth,
+    )
     folder_map = {c["path"]: c["collection_key"] for c in collections}
 
     files = sorted(list_files(root), key=lambda p: str(p).lower())
@@ -1474,7 +1528,11 @@ def scan_directory(dir_path: str, progress_callback=None) -> Tuple[List[Dict], L
     def collection_keys_for(file_path: Path) -> List[str]:
         parent = file_path.parent
         keys = []
-        while parent != root and str(parent).startswith(str(root)):
+        try:
+            parent.relative_to(library_root_path)
+        except ValueError:
+            return ["root"]
+        while parent != library_root_path:
             if str(parent) in folder_map:
                 keys.append(folder_map[str(parent)])
             parent = parent.parent

@@ -1288,6 +1288,7 @@ async function updateSyncStatus() {
                 }
                 if (resultSignature !== appState.lastSyncResultSignature) {
                     appState.lastSyncResultSignature = resultSignature;
+                    loadLibraryTree({ force: true });
                     loadLibraryStats();
                     if (appState.activeCenterView === 'library') loadLibraryItems();
                 }

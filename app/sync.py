@@ -32,6 +32,8 @@ from app.database import (
     set_text_status,
     get_fulltext_for_item,
     get_item_keys_for_dir,
+    get_item_keys_for_file_path_prefix,
+    delete_item,
     delete_items_for_dir,
 )
 from app.local_scanner import scan_directory
@@ -55,6 +57,35 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Optional[Callable[[str, str], None]]
 
 
+def _configured_source_dir_for_scan(scan_path: Path) -> str:
+    matches: List[str] = []
+    for directory in config.reference_dirs:
+        raw = directory.get("path", "")
+        if not raw:
+            continue
+        root = Path(raw).expanduser().resolve()
+        try:
+            scan_path.relative_to(root)
+            matches.append(str(root))
+        except ValueError:
+            continue
+    return max(matches, key=len) if matches else str(scan_path)
+
+
+def _resolve_sync_paths(dir_path: Optional[str]) -> tuple[str, str]:
+    if dir_path:
+        scan_dir = str(Path(dir_path).expanduser().resolve())
+        return scan_dir, _configured_source_dir_for_scan(Path(scan_dir))
+    if config.reference_dirs:
+        target = config.reference_dirs[0].get("path", "")
+        scan_dir = str(Path(target).expanduser().resolve()) if target else ""
+        return scan_dir, scan_dir
+    if config.references_dir:
+        scan_dir = str(Path(config.references_dir).expanduser().resolve())
+        return scan_dir, scan_dir
+    return "", ""
+
+
 def sync_library(
     force_resync: bool = False,
     progress_callback: ProgressCallback = None,
@@ -65,25 +96,12 @@ def sync_library(
         if progress_callback:
             progress_callback(step, detail)
 
-    if dir_path:
-        target_dir = dir_path
-        source_dir = str(Path(dir_path).expanduser().resolve())
-    elif config.reference_dirs:
-        target_dir = config.reference_dirs[0].get("path", "")
-        source_dir = str(Path(target_dir).expanduser().resolve()) if target_dir else ""
-    elif config.references_dir:
-        target_dir = config.references_dir
-        source_dir = str(Path(target_dir).expanduser().resolve())
-    else:
-        return {
-            "status": "error",
-            "error": "No references directory configured. Please add one in Settings.",
-        }
-
+    scan_dir, source_dir = _resolve_sync_paths(dir_path)
+    target_dir = scan_dir
     if not target_dir:
         return {
             "status": "error",
-            "error": "No references directory configured.",
+            "error": "No references directory configured. Please add one in Settings.",
         }
 
     errors: List[str] = []
@@ -103,17 +121,29 @@ def sync_library(
         return {"status": "error", "items_synced": 0, "chunks_created": 0, "errors": errors}
 
     if embedding_model_changed():
+        if scan_dir != source_dir:
+            progress("Embedding model changed — scanning the full library root…", source_dir)
+            scan_dir = source_dir
+            target_dir = source_dir
         progress("Embedding model changed — resetting vector index and FTS…")
         collection = reset_collection(chroma_client)
         clear_all_fts()
         force_resync = True
     elif force_resync:
-        progress(f"Force resync for directory — clearing items from: {source_dir}")
-        old_keys = get_item_keys_for_dir(source_dir)
+        progress(f"Force resync for directory — clearing items from: {scan_dir}")
+        old_keys = (
+            get_item_keys_for_file_path_prefix(scan_dir, source_dir)
+            if scan_dir != source_dir
+            else get_item_keys_for_dir(source_dir)
+        )
         collection = get_or_create_collection(chroma_client)
         for old_key in old_keys:
             delete_item_chunks(collection, old_key)
-        delete_items_for_dir(source_dir)
+        if scan_dir != source_dir:
+            for old_key in old_keys:
+                delete_item(old_key)
+        else:
+            delete_items_for_dir(source_dir)
     else:
         collection = get_or_create_collection(chroma_client)
 
@@ -121,12 +151,13 @@ def sync_library(
     with log_duration(logger, "read ChromaDB indexed item keys", threshold_ms=500):
         indexed_vector_keys = _get_indexed_vector_item_keys(collection)
 
-    progress("Scanning references directory…")
+    progress("Scanning references directory…", scan_dir)
     try:
-        with log_duration(logger, f"scan_directory {source_dir}", threshold_ms=500):
+        with log_duration(logger, f"scan_directory {scan_dir}", threshold_ms=500):
             items, folders = scan_directory(
                 target_dir,
                 progress_callback=progress,
+                library_root=source_dir,
             )
     except Exception as exc:
         err = f"Directory scan error: {exc}"
@@ -145,8 +176,7 @@ def sync_library(
             scanned_paths.add(str(Path(fp).resolve()))
     collections_synced = len(folders)
 
-    if scanned_paths:
-        _cleanup_stale_collections(source_dir, scanned_paths)
+    _cleanup_stale_collections(source_dir, scanned_paths, scan_dir=scan_dir)
 
     total = len(items)
     if total == 0:
@@ -160,6 +190,7 @@ def sync_library(
             "collections_synced": collections_synced,
             "errors": [],
             "source_dir": source_dir,
+            "scan_dir": scan_dir,
         }
 
     progress(f"Processing {total} reference item(s)…")
@@ -303,6 +334,7 @@ def sync_library(
         "chunks_created": chunks_created,
         "errors": errors[:20],
         "source_dir": source_dir,
+        "scan_dir": scan_dir,
     }
 
 
@@ -328,8 +360,9 @@ def _get_indexed_vector_item_keys(collection) -> set:
     return keys
 
 
-def _cleanup_stale_collections(source_dir: str, scanned_paths: set) -> None:
+def _cleanup_stale_collections(source_dir: str, scanned_paths: set, scan_dir: Optional[str] = None) -> None:
     from app.database import get_connection
+    scan_root = str(Path(scan_dir or source_dir).resolve())
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT collection_key, local_path, name FROM collections_v2 WHERE source_dir = ? AND collection_key != 'root'",
@@ -339,6 +372,8 @@ def _cleanup_stale_collections(source_dir: str, scanned_paths: set) -> None:
             lp = row["local_path"] or ""
             if lp:
                 resolved = str(Path(lp).resolve())
+                if scan_dir and not (resolved == scan_root or resolved.startswith(scan_root + "/") or resolved.startswith(scan_root + "\\")):
+                    continue
                 if resolved in scanned_paths or lp in scanned_paths:
                     continue
             else:

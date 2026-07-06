@@ -6,6 +6,7 @@ Uses WAL mode for safe concurrent reads during background sync.
 import hashlib
 import json
 import logging
+import os
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -1917,127 +1918,388 @@ def update_items_source_dir(old_dir: str, new_dir: str) -> None:
         )
 
 
-def update_item_file_path(item_key: str, old_prefix: str, new_prefix: str) -> None:
+def _normalise_path(path: str) -> str:
+    return str(Path(path).expanduser().resolve()) if path else ""
+
+
+def _path_prefix_clauses(column: str, prefix: str, params: List[Any]) -> str:
+    norm = _normalise_path(prefix)
+    params.extend([norm, norm + "/%", norm + "\\%"])
+    return f"({column} = ? OR {column} LIKE ? OR {column} LIKE ?)"
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def collection_key_for_path(path: str) -> str:
+    return hashlib.md5(_normalise_path(path).encode()).hexdigest()[:12]
+
+
+def _configured_source_dir_for_path(path: str, fallback: str = "") -> str:
+    target = Path(path).expanduser().resolve()
+    matches: List[str] = []
+    for directory in config.reference_dirs:
+        raw = directory.get("path", "")
+        if not raw:
+            continue
+        root = Path(raw).expanduser().resolve()
+        if target == root or _path_is_within(target, root):
+            matches.append(str(root))
+    if matches:
+        return max(matches, key=len)
+    return _normalise_path(fallback)
+
+
+def _parent_collection_key_for_path(local_path: str, source_dir: str) -> str:
+    if not local_path or not source_dir:
+        return ""
+    parent = Path(local_path).expanduser().resolve().parent
+    root = Path(source_dir).expanduser().resolve()
+    if parent == root or not _path_is_within(parent, root):
+        return ""
+    return collection_key_for_path(str(parent))
+
+
+def _collection_keys_for_file_path(file_path: str, source_dir: str) -> List[str]:
+    if not file_path or not source_dir:
+        return ["root"]
+    parent = Path(file_path).expanduser().resolve().parent
+    root = Path(source_dir).expanduser().resolve()
+    if parent == root:
+        return ["root"]
+    if not _path_is_within(parent, root):
+        return ["root"]
+
+    keys: List[str] = []
+    while parent != root:
+        keys.append(collection_key_for_path(str(parent)))
+        parent = parent.parent
+    return keys or ["root"]
+
+
+def _set_item_collection_keys(conn: sqlite3.Connection, item_key: str, collection_keys: List[str]) -> None:
+    clean_keys: List[str] = []
+    for key in collection_keys or ["root"]:
+        if key and key not in clean_keys:
+            clean_keys.append(key)
+    if not clean_keys:
+        clean_keys = ["root"]
+
+    conn.execute(
+        "UPDATE items SET collection_keys = ? WHERE item_key = ?",
+        (json.dumps(clean_keys), item_key),
+    )
+    conn.execute("DELETE FROM item_collections WHERE item_key = ?", (item_key,))
+    for key in clean_keys:
+        if key == "root":
+            conn.execute(
+                """INSERT OR IGNORE INTO collections_v2
+                   (collection_key, name, parent_key, source_dir, local_path, collection_type)
+                   VALUES ('root', 'Root', '', '', '', 'folder')"""
+            )
+        elif not conn.execute(
+            "SELECT 1 FROM collections_v2 WHERE collection_key = ?",
+            (key,),
+        ).fetchone():
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO item_collections (item_key, collection_key) VALUES (?, ?)",
+            (item_key, key),
+        )
+
+
+def set_item_collection_keys(item_key: str, collection_keys: List[str]) -> None:
+    with get_connection() as conn:
+        _set_item_collection_keys(conn, item_key, collection_keys)
+
+
+def _replace_item_collection_keys_in_json(conn: sqlite3.Connection, key_map: Dict[str, str]) -> int:
+    if not key_map:
+        return 0
+    updated = 0
+    rows = conn.execute(
+        "SELECT item_key, collection_keys FROM items "
+        "WHERE collection_keys IS NOT NULL AND collection_keys != ''"
+    ).fetchall()
+    for row in rows:
+        try:
+            keys = json.loads(row["collection_keys"]) if isinstance(row["collection_keys"], str) else []
+        except (json.JSONDecodeError, TypeError):
+            continue
+        changed = False
+        next_keys: List[str] = []
+        for key in keys or []:
+            next_key = key_map.get(key, key)
+            if next_key != key:
+                changed = True
+            if next_key and next_key not in next_keys:
+                next_keys.append(next_key)
+        if changed:
+            conn.execute(
+                "UPDATE items SET collection_keys = ? WHERE item_key = ?",
+                (json.dumps(next_keys or ["root"]), row["item_key"]),
+            )
+            updated += 1
+    return updated
+
+
+def get_item_keys_for_file_path_prefix(path_prefix: str, source_dir: str = "") -> List[str]:
+    params: List[Any] = []
+    condition = _path_prefix_clauses("file_path", path_prefix, params)
+    if source_dir:
+        condition += " AND source_dir = ?"
+        params.append(_normalise_path(source_dir))
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT item_key FROM items WHERE {condition}",
+            params,
+        ).fetchall()
+        return [r["item_key"] for r in rows]
+
+
+def refresh_item_collection_memberships_for_path_prefix(path_prefix: str, source_dir: str = "") -> int:
+    params: List[Any] = []
+    condition = _path_prefix_clauses("file_path", path_prefix, params)
+    if source_dir:
+        condition += " AND source_dir = ?"
+        params.append(_normalise_path(source_dir))
+
+    updated = 0
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT item_key, file_path, source_dir FROM items WHERE {condition}",
+            params,
+        ).fetchall()
+        for row in rows:
+            row_source_dir = _normalise_path(source_dir) or row["source_dir"] or _configured_source_dir_for_path(row["file_path"])
+            if row_source_dir and row_source_dir != row["source_dir"]:
+                conn.execute(
+                    "UPDATE items SET source_dir = ? WHERE item_key = ?",
+                    (row_source_dir, row["item_key"]),
+                )
+                conn.execute(
+                    "UPDATE files SET source_dir = ? WHERE item_key = ?",
+                    (row_source_dir, row["item_key"]),
+                )
+            keys = _collection_keys_for_file_path(row["file_path"], row_source_dir)
+            _set_item_collection_keys(conn, row["item_key"], keys)
+            updated += 1
+    return updated
+
+
+def update_item_file_path(item_key: str, old_prefix: str, new_prefix: str, new_source_dir: str = "") -> None:
+    source_norm = _normalise_path(new_source_dir) if new_source_dir else ""
     with get_connection() as conn:
         row = conn.execute(
             "SELECT file_path FROM items WHERE item_key = ?", (item_key,)
         ).fetchone()
         if row and row["file_path"] and row["file_path"].startswith(old_prefix):
             new_path = new_prefix + row["file_path"][len(old_prefix):]
-            conn.execute(
-                "UPDATE items SET file_path = ? WHERE item_key = ?",
-                (new_path, item_key),
-            )
+            if source_norm:
+                conn.execute(
+                    "UPDATE items SET file_path = ?, source_dir = ? WHERE item_key = ?",
+                    (new_path, source_norm, item_key),
+                )
+            else:
+                conn.execute(
+                    "UPDATE items SET file_path = ? WHERE item_key = ?",
+                    (new_path, item_key),
+                )
         conn.execute(
             """UPDATE files SET file_path = REPLACE(file_path, ?, ?)
                WHERE item_key = ? AND file_path LIKE ?""",
             (old_prefix, new_prefix, item_key, old_prefix + "%"),
         )
-        conn.execute(
-            """UPDATE files SET source_dir = REPLACE(source_dir, ?, ?)
-               WHERE item_key = ? AND source_dir LIKE ?""",
-            (old_prefix, new_prefix, item_key, old_prefix + "%"),
-        )
+        if source_norm:
+            conn.execute(
+                "UPDATE files SET source_dir = ? WHERE item_key = ?",
+                (source_norm, item_key),
+            )
+        else:
+            conn.execute(
+                """UPDATE files SET source_dir = REPLACE(source_dir, ?, ?)
+                   WHERE item_key = ? AND source_dir LIKE ?""",
+                (old_prefix, new_prefix, item_key, old_prefix + "%"),
+            )
 
 
-def update_items_file_paths_prefix(old_prefix: str, new_prefix: str) -> int:
+def update_items_file_paths_prefix(old_prefix: str, new_prefix: str, new_source_dir: str = "") -> int:
     updated = 0
+    old_norm = _normalise_path(old_prefix)
+    new_norm = _normalise_path(new_prefix)
+    source_norm = _normalise_path(new_source_dir) if new_source_dir else ""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT item_key, file_path FROM items WHERE file_path LIKE ?",
-            (old_prefix + "%",),
+            "SELECT item_key, file_path FROM items WHERE file_path = ? OR file_path LIKE ? OR file_path LIKE ?",
+            (old_norm, old_norm + "/%", old_norm + "\\%"),
         ).fetchall()
         for row in rows:
-            new_path = new_prefix + row["file_path"][len(old_prefix):]
-            conn.execute(
-                "UPDATE items SET file_path = ? WHERE item_key = ?",
-                (new_path, row["item_key"]),
-            )
+            suffix = row["file_path"][len(old_norm):]
+            new_path = new_norm + suffix
+            if source_norm:
+                conn.execute(
+                    "UPDATE items SET file_path = ?, source_dir = ? WHERE item_key = ?",
+                    (new_path, source_norm, row["item_key"]),
+                )
+            else:
+                conn.execute(
+                    "UPDATE items SET file_path = ? WHERE item_key = ?",
+                    (new_path, row["item_key"]),
+                )
             updated += 1
         conn.execute(
-            "UPDATE files SET file_path = REPLACE(file_path, ?, ?) WHERE file_path LIKE ?",
-            (old_prefix, new_prefix, old_prefix + "%"),
+            "UPDATE files SET file_path = REPLACE(file_path, ?, ?) "
+            "WHERE file_path = ? OR file_path LIKE ? OR file_path LIKE ?",
+            (old_norm, new_norm, old_norm, old_norm + "/%", old_norm + "\\%"),
         )
-        conn.execute(
-            "UPDATE files SET source_dir = REPLACE(source_dir, ?, ?) WHERE source_dir LIKE ?",
-            (old_prefix, new_prefix, old_prefix + "%"),
-        )
+        if source_norm:
+            conn.execute(
+                "UPDATE files SET source_dir = ? WHERE file_path = ? OR file_path LIKE ? OR file_path LIKE ?",
+                (source_norm, new_norm, new_norm + "/%", new_norm + "\\%"),
+            )
+        else:
+            conn.execute(
+                "UPDATE files SET source_dir = REPLACE(source_dir, ?, ?) "
+                "WHERE source_dir = ? OR source_dir LIKE ? OR source_dir LIKE ?",
+                (old_norm, new_norm, old_norm, old_norm + "/%", old_norm + "\\%"),
+            )
     return updated
 
 
+def _replace_path_prefix_value(value: str, old_prefix: str, new_prefix: str) -> str:
+    value_path = Path(value).expanduser().resolve()
+    old_path = Path(old_prefix).expanduser().resolve()
+    new_path = Path(new_prefix).expanduser().resolve()
+    try:
+        rel = value_path.relative_to(old_path)
+        return str(new_path / rel) if rel.parts else str(new_path)
+    except ValueError:
+        old_norm = str(old_path)
+        value_norm = str(value_path)
+        if value_norm == old_norm:
+            return str(new_path)
+        for sep in ("/", "\\", os.sep):
+            marker = old_norm + sep
+            if value_norm.startswith(marker):
+                return str(new_path) + value_norm[len(old_norm):]
+        return value_norm
+
+
+def _update_collection_path_tree(
+    conn: sqlite3.Connection,
+    old_path: str,
+    new_path: str,
+    collection_key: str = "",
+) -> Dict[str, str]:
+    old_norm = _normalise_path(old_path)
+    new_norm = _normalise_path(new_path)
+    old_key = collection_key or _find_collection_by_local_path(conn, old_path)
+    if not old_key:
+        logger.warning("update_collection_path: no collection found for %r", old_path)
+        return {}
+
+    root_row = conn.execute(
+        "SELECT collection_key, local_path, source_dir FROM collections_v2 WHERE collection_key = ?",
+        (old_key,),
+    ).fetchone()
+    if not root_row:
+        logger.warning("update_collection_path: no row found for %r", old_key)
+        return {}
+
+    old_root_path = root_row["local_path"] or old_norm
+    old_root_norm = _normalise_path(old_root_path)
+    params: List[Any] = [old_key]
+    prefix_condition = _path_prefix_clauses("local_path", old_root_norm, params)
+    rows = conn.execute(
+        f"""SELECT collection_key, local_path
+            FROM collections_v2
+            WHERE collection_key = ? OR {prefix_condition}
+            ORDER BY LENGTH(local_path)""",
+        params,
+    ).fetchall()
+
+    rows_by_key: Dict[str, sqlite3.Row] = {}
+    for row in rows:
+        rows_by_key[row["collection_key"]] = row
+
+    source_dir = _configured_source_dir_for_path(new_norm, root_row["source_dir"] or "")
+    key_map: Dict[str, str] = {}
+    path_map: Dict[str, str] = {}
+    for old_row_key, row in rows_by_key.items():
+        row_old_path = row["local_path"] or old_root_norm
+        row_new_path = _replace_path_prefix_value(row_old_path, old_root_norm, new_norm)
+        new_key = collection_key_for_path(row_new_path)
+        key_map[old_row_key] = new_key
+        path_map[old_row_key] = row_new_path
+
+    for old_row_key, row in rows_by_key.items():
+        row_new_path = path_map[old_row_key]
+        new_key = key_map[old_row_key]
+        new_name = Path(row_new_path).name
+        parent_key = _parent_collection_key_for_path(row_new_path, source_dir)
+        conn.execute(
+            """INSERT INTO collections_v2
+                   (collection_key, name, parent_key, source_dir, local_path, collection_type)
+               VALUES (?, ?, ?, ?, ?, 'folder')
+               ON CONFLICT(collection_key) DO UPDATE SET
+                   name = excluded.name,
+                   parent_key = excluded.parent_key,
+                   source_dir = excluded.source_dir,
+                   local_path = excluded.local_path,
+                   updated_at = CURRENT_TIMESTAMP""",
+            (new_key, new_name, parent_key, source_dir, row_new_path),
+        )
+        conn.execute(
+            """INSERT INTO collections (collection_key, name, parent_key)
+               VALUES (?, ?, ?)
+               ON CONFLICT(collection_key) DO UPDATE SET
+                   name = excluded.name,
+                   parent_key = excluded.parent_key""",
+            (new_key, new_name, parent_key),
+        )
+        if new_key == old_row_key:
+            continue
+        conn.execute(
+            """INSERT OR IGNORE INTO item_collections (item_key, collection_key)
+               SELECT item_key, ? FROM item_collections WHERE collection_key = ?""",
+            (new_key, old_row_key),
+        )
+        conn.execute("DELETE FROM item_collections WHERE collection_key = ?", (old_row_key,))
+
+    for old_row_key, new_key in key_map.items():
+        if new_key == old_row_key:
+            continue
+        conn.execute("DELETE FROM collections_v2 WHERE collection_key = ?", (old_row_key,))
+        conn.execute("DELETE FROM collections WHERE collection_key = ?", (old_row_key,))
+
+    _replace_item_collection_keys_in_json(conn, key_map)
+    return key_map
+
+
 def delete_collection_by_path(local_path: str) -> None:
+    params: List[Any] = []
+    condition = _path_prefix_clauses("local_path", local_path, params)
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT collection_key FROM collections_v2 WHERE local_path = ?", (local_path,)
+            f"SELECT collection_key FROM collections_v2 WHERE {condition}",
+            params,
         ).fetchall()
         keys = [r["collection_key"] for r in rows]
         conn.execute("DELETE FROM item_collections WHERE collection_key IN (" +
                      ",".join("?" for _ in keys) + ")", keys) if keys else None
-        conn.execute("DELETE FROM collections_v2 WHERE local_path = ?", (local_path,))
+        conn.execute(f"DELETE FROM collections_v2 WHERE {condition}", params)
         for k in keys:
             conn.execute("DELETE FROM collections WHERE collection_key = ?", (k,))
 
 
-def _rename_collection_in_db(collection_key: str, old_path: str, new_path: str) -> None:
-    from pathlib import Path as P
-    new_norm = str(P(new_path).resolve())
-    new_name = P(new_norm).name
-    new_hash = hashlib.md5(new_norm.encode()).hexdigest()[:12]
-    parent_dir = str(P(new_norm).parent)
-    parent_hash = hashlib.md5(parent_dir.encode()).hexdigest()[:12] if parent_dir else ""
-
+def _rename_collection_in_db(collection_key: str, old_path: str, new_path: str) -> Dict[str, str]:
     with get_connection() as conn:
-        if collection_key:
-            old_key = collection_key
-        else:
-            found = _find_collection_by_local_path(conn, old_path)
-            if not found:
-                logger.warning("_rename_collection_in_db: no collection found for %r", old_path)
-                return
-            old_key = found
-
-        conn.execute(
-            """UPDATE collections_v2 SET collection_key = ?, name = ?, local_path = ?, parent_key = ?
-               WHERE collection_key = ?""",
-            (new_hash, new_name, new_norm, parent_hash, old_key),
-        )
-        conn.execute(
-            "UPDATE collections SET collection_key = ?, name = ? WHERE collection_key = ?",
-            (new_hash, new_name, old_key),
-        )
-        conn.execute(
-            "UPDATE item_collections SET collection_key = ? WHERE collection_key = ?",
-            (new_hash, old_key),
-        )
-
-        old_norm = str(P(old_path).resolve()) if old_path else old_path
-        child_rows = conn.execute(
-            "SELECT collection_key, local_path FROM collections_v2 WHERE local_path LIKE ?",
-            (old_norm + "/%",),
-        ).fetchall()
-        if not child_rows:
-            child_rows = conn.execute(
-                "SELECT collection_key, local_path FROM collections_v2 WHERE local_path LIKE ?",
-                (old_path + "/%",),
-            ).fetchall()
-        for child_row in child_rows:
-            child_old = child_row["local_path"]
-            prefix = old_norm if child_old.startswith(old_norm) else old_path
-            child_new = new_norm + child_old[len(prefix):]
-            child_new_hash = hashlib.md5(child_new.encode()).hexdigest()[:12]
-            child_new_name = P(child_new).name
-            conn.execute(
-                "UPDATE collections_v2 SET collection_key = ?, local_path = ?, parent_key = ? WHERE collection_key = ?",
-                (child_new_hash, child_new, new_hash, child_row["collection_key"]),
-            )
-            conn.execute(
-                "UPDATE collections SET collection_key = ?, name = ? WHERE collection_key = ?",
-                (child_new_hash, child_new_name, child_row["collection_key"]),
-            )
-            conn.execute(
-                "UPDATE item_collections SET collection_key = ? WHERE collection_key = ?",
-                (child_new_hash, child_row["collection_key"]),
-            )
+        return _update_collection_path_tree(conn, old_path, new_path, collection_key)
 
 
 def _find_collection_by_local_path(conn, path: str) -> Optional[str]:
@@ -2067,62 +2329,9 @@ def _find_collection_by_local_path(conn, path: str) -> Optional[str]:
     return None
 
 
-def update_collection_path(old_path: str, new_path: str) -> None:
-    from pathlib import Path as P
-    new_norm = str(P(new_path).resolve())
-    new_name = P(new_norm).name
-    new_hash = hashlib.md5(new_norm.encode()).hexdigest()[:12]
-    parent_dir = str(P(new_norm).parent)
-    parent_hash = hashlib.md5(parent_dir.encode()).hexdigest()[:12] if parent_dir else ""
-
+def update_collection_path(old_path: str, new_path: str) -> Dict[str, str]:
     with get_connection() as conn:
-        old_key = _find_collection_by_local_path(conn, old_path)
-        if not old_key:
-            logger.warning("update_collection_path: no collection found for %r", old_path)
-            return
-
-        conn.execute(
-            """UPDATE collections_v2 SET collection_key = ?, name = ?, local_path = ?, parent_key = ?
-               WHERE collection_key = ?""",
-            (new_hash, new_name, new_norm, parent_hash, old_key),
-        )
-        conn.execute(
-            "UPDATE collections SET collection_key = ?, name = ? WHERE collection_key = ?",
-            (new_hash, new_name, old_key),
-        )
-        conn.execute(
-            "UPDATE item_collections SET collection_key = ? WHERE collection_key = ?",
-            (new_hash, old_key),
-        )
-
-        old_norm = str(P(old_path).resolve()) if old_path else old_path
-        child_rows = conn.execute(
-            "SELECT collection_key, local_path FROM collections_v2 WHERE local_path LIKE ?",
-            (old_norm + "/%",),
-        ).fetchall()
-        if not child_rows:
-            child_rows = conn.execute(
-                "SELECT collection_key, local_path FROM collections_v2 WHERE local_path LIKE ?",
-                (old_path + "/%",),
-            ).fetchall()
-        for child_row in child_rows:
-            child_old = child_row["local_path"]
-            prefix = old_norm if child_old.startswith(old_norm) else old_path
-            child_new = new_norm + child_old[len(prefix):]
-            child_new_hash = hashlib.md5(child_new.encode()).hexdigest()[:12]
-            child_new_name = P(child_new).name
-            conn.execute(
-                "UPDATE collections_v2 SET collection_key = ?, local_path = ?, parent_key = ? WHERE collection_key = ?",
-                (child_new_hash, child_new, new_hash, child_row["collection_key"]),
-            )
-            conn.execute(
-                "UPDATE collections SET collection_key = ?, name = ? WHERE collection_key = ?",
-                (child_new_hash, child_new_name, child_row["collection_key"]),
-            )
-            conn.execute(
-                "UPDATE item_collections SET collection_key = ? WHERE collection_key = ?",
-                (child_new_hash, child_row["collection_key"]),
-            )
+        return _update_collection_path_tree(conn, old_path, new_path)
 
 
 def backfill_source_dirs(dir_paths: List[str]) -> int:
@@ -2276,7 +2485,12 @@ def get_library_tree() -> List[Dict]:
     """Get directory/collection tree for library browsing with full nested hierarchy."""
     with get_connection() as conn:
         dirs = conn.execute(
-            "SELECT DISTINCT source_dir FROM items WHERE source_dir != '' ORDER BY source_dir"
+            """SELECT source_dir FROM (
+                   SELECT DISTINCT source_dir FROM items WHERE source_dir != ''
+                   UNION
+                   SELECT DISTINCT source_dir FROM collections_v2 WHERE source_dir != ''
+               )
+               ORDER BY source_dir"""
         ).fetchall()
         count_rows = conn.execute(
             """SELECT source_dir, COUNT(*) AS cnt

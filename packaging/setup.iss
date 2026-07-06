@@ -13,8 +13,8 @@
 ;   #define SIGNTOOL "AzureSignTool.exe sign -du ""TarCite Workspace"" -kvu https://your-vault.vault.azure.net/ -kvi xxx -kvs xxx -kvc your-cert -tr http://timestamp.digicert.com $f"
 
 #define MyAppName "TarCite Workspace"
-#define MyAppVersion "0.2.26"
-#define MyAppDisplayVersion "v.02.26 (Nokilalaki Peak)"
+#define MyAppVersion "0.2.36"
+#define MyAppDisplayVersion "v.02.36 (Nokilalaki Peak)"
 #define MyAppPublisher "Naufal Naufal"
 #define MyAppURL "https://tarcite.com"
 #define MyAppExeName "TarCiteWorkspace.exe"
