@@ -43,12 +43,30 @@ packaging\build_windows.bat
 ```
 Output: `dist\TarCiteWorkspace_minimal-Setup.exe`
 
-**Signed build** (requires a code-signing certificate; in CI this is handled by SignPath):
+**Signed local build** (requires a Windows code-signing certificate installed locally):
 ```bat
 set SIGNTOOL=1
 packaging\build_windows.bat
 ```
 Output: signed `dist\TarCiteWorkspace-Setup.exe`
+
+**Signed GitHub Actions build**:
+
+The Windows workflow signs `dist\TarCiteWorkspace_minimal-Setup.exe` automatically when
+these repository secrets are configured:
+
+| Secret | Value |
+|------|-------|
+| `WINDOWS_CODESIGN_PFX_BASE64` | Base64-encoded `.pfx` code-signing certificate |
+| `WINDOWS_CODESIGN_PFX_PASSWORD` | Password for the `.pfx` certificate |
+
+On macOS, copy the certificate secret with:
+
+```bash
+base64 -i certificate.pfx | tr -d '\n' | pbcopy
+```
+
+Then add both secrets in GitHub: **Settings → Secrets and variables → Actions**.
 
 ---
 

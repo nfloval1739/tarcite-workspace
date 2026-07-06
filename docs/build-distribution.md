@@ -82,9 +82,27 @@ dist\TarCiteWorkspace\             ← intermediate folder (not distributed)
 
 Unsigned installers trigger a SmartScreen "Unknown publisher" warning on first install.
 
-This project signs Windows builds through **[SignPath.org](https://signpath.org)** (free
-for open-source projects), wired into the GitHub Actions release workflow. SignPath signs
-the artifact produced by CI — no certificate is stored in the repo.
+GitHub Actions signs the Windows installer when a Windows code-signing certificate is
+provided as repository secrets. The certificate is not stored in the repo.
+
+Required repository secrets:
+
+| Secret | Value |
+|---|---|
+| `WINDOWS_CODESIGN_PFX_BASE64` | Base64-encoded `.pfx` code-signing certificate |
+| `WINDOWS_CODESIGN_PFX_PASSWORD` | Password for the `.pfx` certificate |
+
+On macOS, copy the base64 certificate value with:
+
+```bash
+base64 -i certificate.pfx | tr -d '\n' | pbcopy
+```
+
+Then add both secrets in GitHub: **Settings → Secrets and variables → Actions**.
+
+The workflow signs `dist\TarCiteWorkspace_minimal-Setup.exe` before uploading it to the
+`windows-latest` release. If the secrets are missing, the workflow still builds and
+uploads the installer, but it remains unsigned.
 
 If you build locally and have your own code-signing certificate:
 

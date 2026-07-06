@@ -41,6 +41,53 @@ jobs:
           BUILD_VARIANT: minimal
         run: packaging\build_windows.bat
 
+      - name: Sign Windows installer
+        shell: pwsh
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_PASSWORD)) {
+            "WINDOWS_INSTALLER_SIGNING_STATUS=unsigned" | Out-File -FilePath $env:GITHUB_ENV -Append
+            Write-Host "Windows signing secrets are not configured; installer remains unsigned."
+            exit 0
+          }
+
+          $installer = "dist\TarCiteWorkspace_minimal-Setup.exe"
+          if (!(Test-Path $installer)) {
+            throw "Installer not found: $installer"
+          }
+
+          $windowsKits = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $signtool = Get-ChildItem $windowsKits -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match "\\x64\\signtool.exe$" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+
+          if ([string]::IsNullOrWhiteSpace($signtool)) {
+            throw "signtool.exe not found under $windowsKits"
+          }
+
+          $certPath = Join-Path $env:RUNNER_TEMP "windows-codesign.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX_BASE64))
+
+          & $signtool sign `
+            /fd SHA256 `
+            /tr http://timestamp.digicert.com `
+            /td SHA256 `
+            /f $certPath `
+            /p $env:WINDOWS_CODESIGN_PFX_PASSWORD `
+            $installer
+
+          & $signtool verify /pa /v $installer
+          Remove-Item $certPath -Force
+
+          "WINDOWS_INSTALLER_SIGNING_STATUS=signed" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Windows installer signed successfully."
+
       - name: Publish Windows installer release asset
         shell: pwsh
         env:
@@ -62,6 +109,12 @@ jobs:
             throw "Installer not found: $env:ASSET_PATH"
           }
 
+          if ($env:WINDOWS_INSTALLER_SIGNING_STATUS -eq "signed") {
+            $signingNote = "The installer is code-signed by the configured Windows signing certificate."
+          } else {
+            $signingNote = "Windows may show `"Unknown publisher`" because the installer is not code-signed."
+          }
+
           $notes = @"
           Latest Windows installer built from $env:GITHUB_SHA.
 
@@ -69,7 +122,7 @@ jobs:
           For the FULL offline installer (models bundled, ~3-4 GB), build locally:
             packaging\build_windows.bat
 
-          Windows may show "Unknown publisher" because the installer is not yet code-signed.
+          $signingNote
           See docs/WINDOWS_INSTALL_HELP.md for safe installation steps.
           "@
 
