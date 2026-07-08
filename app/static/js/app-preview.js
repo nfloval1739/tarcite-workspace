@@ -4176,9 +4176,26 @@ async function handleTextSelection(e) {
     const itemKey = appState.previewItem.item_key;
     const fileId = appState.previewItem.files?.[0]?.file_id;
 
-    let geometry = await getPdfTextMatchGeometry(selectedText, pageNum);
+    // Geometry for the annotation should reflect what the user actually dragged
+    // across, not a fuzzy re-match against the whole page.  For direct manual
+    // selections the DOM range is the source of truth: range.getClientRects()
+    // returns exactly the rectangles the browser painted for the selection, so
+    // the resulting highlight matches the visible drag extent.
+    //
+    // We previously led with getPdfTextMatchGeometry() and only fell back to
+    // getSelectionGeometry() when that failed.  The PDF text-content matcher
+    // (findBestTokenRange in app-preview.js) uses a fuzzy "contains-all-keywords
+    // window" fallback that can stretch start..end across intervening bystander
+    // tokens when an exact match isn't found — so on PDFs whose text-content
+    // tokenisation doesn't cleanly line up with the visible glyphs (whitespace
+    // collapsing, kerning, ligature splitting, missing ToUnicode CMaps, etc.)
+    // the computed geometry covered neighbouring text the user never selected,
+    // i.e. "the highlight snaps to many texts around".  This is the inverse of
+    // the citation-chat path (app-citation-chat.js ~line 441), which already
+    // prefers span geometry and falls back to text-content matching.
+    let geometry = getSelectionGeometry(range, textLayerEl);
     if (!geometry) {
-        geometry = getSelectionGeometry(range, textLayerEl);
+        geometry = await getPdfTextMatchGeometry(selectedText, pageNum);
     }
     if (!geometry) {
         selection.removeAllRanges();

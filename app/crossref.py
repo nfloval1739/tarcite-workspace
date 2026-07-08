@@ -24,20 +24,53 @@ DEFAULT_CROSSREF_TIMEOUT_SECONDS = 8.0
 
 
 def normalize_doi(raw: str) -> str:
-    """Return a clean DOI without URL prefixes or surrounding punctuation."""
+    """Return a clean DOI without URL prefixes or surrounding punctuation.
+
+    Handles common malformed inputs users paste, including:
+      - https://doi.org/10.1007/s10021-013-9744-2
+      - https://dx.doi.org/10.1007/s10021-013-9744-2
+      - doi: 10.1007/s10021-013-9744-2
+      - https://10.1007/s10021-013-9744-2  (Springer-style host that mirrors the
+        DOI registrar; Crossref still resolves the URL form, but normalising here
+        yields the canonical bare DOI)
+      - 10.1007/s10021-013-9744-2
+    """
     doi = (raw or "").strip()
     if not doi:
         return ""
     doi = re.sub(r"(?i)^https?://(?:dx\.)?doi\.org/", "", doi)
     doi = re.sub(r"(?i)^doi:\s*", "", doi)
     doi = doi.strip().strip(".,;:()[]{}<>")
+    # If the input was a "@host@/10.<registrar>/<rest>" URL whose host IS the
+    # DOI registrar prefix (e.g. "https://10.1007/s10021-013-9744-2"), the two
+    # regexes above won't strip the http prefix. Extract the canonical
+    # "10.<registrar>/<rest>" tail so Crossref gets a clean DOI path segment.
+    m = re.search(r"(10\.\d{4,}/[^\s\"'>]+)", doi)
+    if m:
+        doi = m.group(1).rstrip(".,;:)]}>")
+        doi = doi.rstrip(")")  # closing paren of "(doi)"
     return doi
 
 
 def fetch_crossref_metadata(doi: str) -> Optional[Dict[str, Any]]:
+    metadata, _reason = fetch_crossref_metadata_with_reason(doi)
+    return metadata
+
+
+def fetch_crossref_metadata_with_reason(doi: str):
+    """Look up Crossref metadata for ``doi``.
+
+    Returns a tuple ``(metadata, reason)`` where ``metadata`` is ``None`` on
+    failure and ``reason`` is an empty string on success or a short human-
+    readable description of why the lookup failed (e.g. "DOI is empty",
+    "Crossref returned HTTP 404", "network error: SSL: ...", "timed out
+    after Ns").  Surfacing the reason lets the UI distinguish "DOI not on
+    Crossref" from "your bundle can't reach Crossref", which previously all
+    collapsed into the same "No Crossref metadata found" message.
+    """
     doi = normalize_doi(doi)
     if not doi:
-        return None
+        return None, "DOI is empty after normalisation."
 
     query = {}
     mailto = _mailto()
@@ -53,24 +86,37 @@ def fetch_crossref_metadata(doi: str) -> Optional[Dict[str, Any]]:
         "User-Agent": _user_agent(mailto),
     }
     request = urllib.request.Request(url, headers=headers)
+    timeout_s = _timeout_seconds()
 
     try:
-        with urllib.request.urlopen(request, timeout=_timeout_seconds()) as response:
-            if response.status != 200:
-                logger.info("Crossref lookup for DOI %s returned HTTP %s", doi, response.status)
-                return None
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:
+            status = getattr(response, "status", None)
+            if status is not None and status != 200:
+                logger.warning("Crossref lookup for DOI %s returned HTTP %s", doi, status)
+                return None, f"Crossref returned HTTP {status}."
             payload = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
-        logger.info("Crossref lookup failed for DOI %s: %s", doi, exc)
-        return None
+    except urllib.error.HTTPError as exc:
+        logger.warning("Crossref lookup for DOI %s returned HTTP %s: %s", doi, exc.code, exc.reason)
+        return None, f"Crossref returned HTTP {exc.code} ({exc.reason})."
+    except TimeoutError:
+        logger.warning("Crossref lookup for DOI %s timed out after %ss", doi, timeout_s)
+        return None, f"Crossref request timed out after {timeout_s:g}s."
+    except urllib.error.URLError as exc:
+        # Most common cause inside PyInstaller bundles: SSL verification fails
+        # because the stdlib HTTPS context can't find a CA bundle.
+        logger.warning("Crossref lookup failed for DOI %s: %s", doi, exc)
+        return None, f"network error: {exc.reason or exc}"
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Crossref lookup failed for DOI %s: %s", doi, exc)
+        return None, f"network error: {exc}"
 
-    message = payload.get("message", {})
+    message = payload.get("message", {}) if isinstance(payload, dict) else None
     if not isinstance(message, dict):
-        return None
+        return None, "Crossref response had no message body."
 
     metadata = _message_to_item_metadata(message)
     metadata["doi"] = normalize_doi(metadata.get("doi", doi)) or doi
-    return metadata
+    return metadata, ""
 
 
 def fetch_crossref_references(doi: str) -> Optional[List[Dict[str, Any]]]:

@@ -97,11 +97,16 @@ def refetch_item_crossref_metadata_route(item_key: str, body: Optional[Dict[str,
     if not doi:
         raise HTTPException(status_code=400, detail="DOI is required before Crossref refetch.")
 
-    from app.crossref import fetch_crossref_metadata
+    from app.crossref import fetch_crossref_metadata_with_reason
 
-    metadata = fetch_crossref_metadata(doi)
+    metadata, reason = fetch_crossref_metadata_with_reason(doi)
     if not metadata:
-        raise HTTPException(status_code=404, detail="No Crossref metadata found for this DOI.")
+        # Distinguish "DOI isn't on Crossref" from "the app couldn't reach
+        # Crossref" so users debugging bundle/network issues aren't misled.
+        detail = "No Crossref metadata found for this DOI."
+        if reason:
+            detail = f"Crossref lookup failed: {reason}"
+        raise HTTPException(status_code=404, detail=detail)
 
     update_item_metadata(item_key, metadata)
     updated = get_item_v2(item_key) or {"item_key": item_key}

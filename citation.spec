@@ -205,7 +205,14 @@ a = Analysis(
     hiddenimports=all_hidden,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=["packaging/rthook_torchvision.py", "packaging/rthook_transformers.py"],
+    runtime_hooks=[
+        # Wire stdlib urllib/SSL to the bundled certifi CA bundle. Without this
+        # hook, crossref.py's urllib HTTPS calls fail TLS verification inside the
+        # frozen bundle and silently surface as "No Crossref metadata found".
+        "packaging/rthook_ssl_certifi.py",
+        "packaging/rthook_torchvision.py",
+        "packaging/rthook_transformers.py",
+    ],
     excludes=[
         "tkinter", "matplotlib",
         "PIL.ImageTk", "PIL.ImageQt",
