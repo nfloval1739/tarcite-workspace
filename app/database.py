@@ -2707,6 +2707,7 @@ from app.repositories.annotations import (
     delete_tag,
     get_all_annotations_for_synthesis,
     get_all_tags,
+    get_annotation,
     get_annotations_for_item,
     get_item_keywords,
     get_tags_for_annotation,

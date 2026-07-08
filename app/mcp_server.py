@@ -13,7 +13,12 @@ Two transports share this one definition:
   HTTP           reachable at http(s)://<host>/mcp for HTTP-capable clients.
 
 Everything runs in-process against the same SQLite + ChromaDB stores the app
-already uses — no HTTP hop, no extra server. All tools are read-only.
+already uses — no HTTP hop, no extra server. The retrieval / citation tools are
+read-only; the metadata- and annotation-editing tools (`update_item_metadata`,
+`set_item_notes`, `set_item_favorite`, `set_item_reading_status`,
+`list_annotations`, `add_annotation`, `update_annotation`,
+`delete_annotation`, `set_annotation_tags`, `import_annotations`,
+`list_tags`, `create_tag`) mutate the library and are write-capable.
 """
 
 from __future__ import annotations
@@ -521,6 +526,431 @@ async def library_stats() -> Dict[str, Any]:
         "chunk_count": chunk_count,
         "last_sync": dict(last_sync) if last_sync else None,
     }
+
+
+# ── write tools: metadata ───────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def update_item_metadata(
+    item_key: str,
+    title: Optional[str] = None,
+    year: Optional[str] = None,
+    item_type: Optional[str] = None,
+    publication_title: Optional[str] = None,
+    doi: Optional[str] = None,
+    url: Optional[str] = None,
+    abstract: Optional[str] = None,
+    volume: Optional[str] = None,
+    issue: Optional[str] = None,
+    pages: Optional[str] = None,
+    publisher: Optional[str] = None,
+    place: Optional[str] = None,
+    edition: Optional[str] = None,
+    isbn: Optional[str] = None,
+    issn: Optional[str] = None,
+    extra: Optional[str] = None,
+    creators: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
+    """Edit the bibliographic metadata of a library item. Only the fields you
+    pass are changed; omitted fields are left untouched.
+
+    Use `search_metadata` first to resolve a paper to its `item_key`, then call
+    this to correct typos, fill in missing fields, or fix the author list.
+
+    Args:
+        item_key: The item_key of the library item to edit.
+        title: Article/book title.
+        year: Publication year (e.g. "2024").
+        item_type: One of the app's item types (e.g. "journal_article",
+            "book", "book_section", "conference_paper", "thesis", "report",
+            "webpage"). Unknown values are stored verbatim.
+        publication_title: Journal, book series, or conference name.
+        doi: DOI, with or without the leading "https://doi.org/".
+        url: A canonical URL for the item.
+        abstract: Abstract / summary text.
+        volume / issue / pages / publisher / place / edition / isbn / issn:
+            other bibliographic fields.
+        extra: Free-text "extra" field (Zotero-style).
+        creators: Full replacement author list. Each entry is a dict with
+            ``firstName`` and ``lastName`` (for a person) or ``name`` (for an
+            organisation), and optional ``creatorType`` (default "author").
+            Passing ``[]`` clears the author list. Order is preserved.
+    """
+    from app.database import get_item_v2, update_item_metadata
+
+    item = await _to_thread(get_item_v2, item_key)
+    if not item:
+        return {"status": "not_found", "item_key": item_key}
+
+    updates: Dict[str, Any] = {}
+    for field in (
+        "title", "year", "item_type", "publication_title", "doi", "url",
+        "abstract", "volume", "issue", "pages", "publisher", "place",
+        "edition", "isbn", "issn", "extra",
+    ):
+        value = locals()[field]
+        if value is not None:
+            updates[field] = str(value)
+    if creators is not None:
+        updates["creators"] = creators
+
+    if not updates:
+        return {"status": "noop", "item_key": item_key, "item": item}
+
+    await _to_thread(update_item_metadata, item_key, updates)
+    refreshed = await _to_thread(get_item_v2, item_key) or {"item_key": item_key}
+    return {"status": "updated", "item_key": item_key, "item": refreshed}
+
+
+@mcp.tool()
+async def set_item_notes(
+    item_key: str,
+    notes: Optional[str] = None,
+    note_connections: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Set or clear the free-text notes (and optional note-connections JSON)
+    attached to a library item. Pass only the fields you want to change.
+
+    Args:
+        item_key: The item_key of the library item.
+        notes: The notes text. Pass "" to clear the notes.
+        note_connections: JSON string of structured note connections
+            (see app's notes schema). Pass "[]" to clear.
+    """
+    from app.database import get_item_notes, get_item_v2, patch_item_notes
+
+    if not await _to_thread(get_item_v2, item_key):
+        return {"status": "not_found", "item_key": item_key}
+
+    data: Dict[str, Any] = {}
+    if notes is not None:
+        data["notes"] = notes
+    if note_connections is not None:
+        data["note_connections"] = note_connections
+    if not data:
+        return {"status": "noop", "item_key": item_key, **(await _to_thread(get_item_notes, item_key) or {"item_key": item_key})}
+
+    await _to_thread(patch_item_notes, item_key, data)
+    return {"status": "updated", "item_key": item_key, **(await _to_thread(get_item_notes, item_key) or {"item_key": item_key})}
+
+
+@mcp.tool()
+async def set_item_favorite(item_key: str, favorite: bool) -> Dict[str, Any]:
+    """Mark a library item as a favourite, or clear the favourite flag.
+
+    Args:
+        item_key: The item_key of the library item.
+        favorite: True to favourite, False to unfavourite.
+    """
+    from app.database import set_item_favorite as _set_favorite
+
+    activity = await _to_thread(_set_favorite, item_key, bool(favorite))
+    if activity is None:
+        return {"status": "not_found", "item_key": item_key}
+    return {"status": "updated", "item_key": item_key, "activity": activity}
+
+
+@mcp.tool()
+async def set_item_reading_status(item_key: str, status: str) -> Dict[str, Any]:
+    """Set the reading status of a library item.
+
+    Args:
+        item_key: The item_key of the library item.
+        status: One of "" (not started), "reading", or "read".
+    """
+    from app.database import set_item_reading_status as _set_status
+
+    status = (status or "").strip()
+    if status not in ("", "reading", "read"):
+        return {"status": "error", "message": "status must be one of '', 'reading', 'read'", "item_key": item_key}
+
+    activity = await _to_thread(_set_status, item_key, status)
+    if activity is None:
+        return {"status": "not_found", "item_key": item_key}
+    return {"status": "updated", "item_key": item_key, "activity": activity}
+
+
+# ── write tools: annotations ────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def list_annotations(item_key: str) -> Dict[str, Any]:
+    """List all annotations (highlights, notes, ink) on a library item, with
+    their tags, page, quote, and comment. Use this to see what's already on a
+    paper before adding or editing annotations.
+
+    Args:
+        item_key: The item_key of the library item.
+    """
+    from app.database import get_annotations_for_item, get_item_v2
+
+    if not await _to_thread(get_item_v2, item_key):
+        return {"status": "not_found", "item_key": item_key, "annotations": []}
+
+    annotations = await _to_thread(get_annotations_for_item, item_key)
+    out = []
+    for a in annotations:
+        out.append(
+            {
+                "annotation_id": a.get("annotation_id"),
+                "item_key": a.get("item_key", ""),
+                "page_index": a.get("page_index", 0),
+                "annotation_type": a.get("annotation_type", ""),
+                "color": a.get("color", ""),
+                "quote": a.get("quote", ""),
+                "comment": a.get("comment", ""),
+                "sentiment": a.get("sentiment"),
+                "geometry_json": a.get("geometry_json", "{}"),
+                "source_chunk_id": a.get("source_chunk_id", ""),
+                "created_at": a.get("created_at", ""),
+                "updated_at": a.get("updated_at", ""),
+                "tags": [
+                    {"tag_id": t.get("tag_id"), "name": t.get("name", ""), "color": t.get("color", "")}
+                    for t in (a.get("tags") or [])
+                ],
+            }
+        )
+    return {"status": "ok", "item_key": item_key, "count": len(out), "annotations": out}
+
+
+@mcp.tool()
+async def add_annotation(
+    item_key: str,
+    annotation_type: str,
+    page_index: int = 0,
+    quote: str = "",
+    comment: str = "",
+    color: str = "",
+    geometry_json: str = "{}",
+    sentiment: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Add a new annotation (highlight, note, or ink) to a library item, with
+    an optional comment and theme tags. Returns the created annotation id.
+
+    This writes a TarCite-side annotation record; it does not draw into the PDF
+    file on disk.
+
+    Args:
+        item_key: The item_key of the library item to annotate.
+        annotation_type: One of "highlight", "note", "ink", "underline",
+            "strikeout", or "text". Other short strings are stored verbatim.
+        page_index: Zero-based PDF page number to attach the annotation to.
+        quote: The quoted passage text (for highlights / quotes).
+        comment: A comment / note attached to the annotation.
+        color: Hex colour string (e.g. "#FFEB3B") or "" for default.
+        geometry_json: JSON string of the on-page geometry (rects / points),
+            as produced by the app's PDF viewer. Default "{}".
+        sentiment: Optional free-text sentiment label (e.g. "positive",
+            "critical"). Pass None to omit.
+        tags: Optional list of theme-tag names to apply. New tag names are
+            created automatically.
+    """
+    from app.database import create_annotation, get_annotation, get_item_v2, set_annotation_tags
+    from app.repositories.annotations import create_tag
+
+    if not await _to_thread(get_item_v2, item_key):
+        return {"status": "not_found", "item_key": item_key}
+
+    annotation_type = (annotation_type or "highlight").strip() or "highlight"
+    data = {
+        "item_key": item_key,
+        "file_id": None,
+        "page_index": int(page_index or 0),
+        "annotation_type": annotation_type,
+        "color": color or "",
+        "quote": quote or "",
+        "comment": comment or "",
+        "geometry_json": geometry_json or "{}",
+        "source_chunk_id": "",
+        "sentiment": sentiment,
+    }
+    annotation_id = await _to_thread(create_annotation, data)
+
+    if tags:
+        tag_ids = []
+        for name in tags:
+            name = (name or "").strip()
+            if not name:
+                continue
+            tag_ids.append(await _to_thread(create_tag, name))
+        tag_ids = [t for t in tag_ids if t]
+        if tag_ids:
+            await _to_thread(set_annotation_tags, annotation_id, tag_ids)
+
+    annotation = await _to_thread(get_annotation, annotation_id)
+    return {"status": "created", "annotation_id": annotation_id, "annotation": annotation}
+
+
+@mcp.tool()
+async def update_annotation(
+    annotation_id: int,
+    annotation_type: Optional[str] = None,
+    quote: Optional[str] = None,
+    comment: Optional[str] = None,
+    color: Optional[str] = None,
+    geometry_json: Optional[str] = None,
+    sentiment: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Edit an existing annotation's type, quoted text, comment, colour,
+    geometry, or sentiment. Omitted fields are left unchanged. Use
+    `set_annotation_tags` to change tags, and `list_annotations` to find the
+    `annotation_id`.
+
+    Args:
+        annotation_id: The id of the annotation to edit.
+        annotation_type: New annotation type (e.g. "highlight", "note").
+        quote: New quoted passage text.
+        comment: New comment / note text. Pass "" to clear.
+        color: New hex colour (e.g. "#FFEB3B") or "" for default.
+        geometry_json: New on-page geometry JSON string.
+        sentiment: New sentiment label, or None / "" to clear.
+    """
+    from app.database import get_annotation, update_annotation as _update_annotation
+
+    existing = await _to_thread(get_annotation, annotation_id)
+    if not existing:
+        return {"status": "not_found", "annotation_id": annotation_id}
+
+    data: Dict[str, Any] = {
+        "annotation_type": annotation_type if annotation_type is not None else existing.get("annotation_type", "highlight"),
+        "color": color if color is not None else existing.get("color", ""),
+        "quote": quote if quote is not None else existing.get("quote", ""),
+        "comment": comment if comment is not None else existing.get("comment", ""),
+        "geometry_json": geometry_json if geometry_json is not None else existing.get("geometry_json", "{}"),
+        "sentiment": sentiment if sentiment is not None else existing.get("sentiment"),
+    }
+    await _to_thread(_update_annotation, annotation_id, data)
+    annotation = await _to_thread(get_annotation, annotation_id)
+    return {"status": "updated", "annotation_id": annotation_id, "annotation": annotation}
+
+
+@mcp.tool()
+async def delete_annotation(annotation_id: int) -> Dict[str, Any]:
+    """Permanently delete an annotation (and its tag links).
+
+    Args:
+        annotation_id: The id of the annotation to delete.
+    """
+    from app.database import delete_annotation as _delete_annotation, get_annotation
+
+    existing = await _to_thread(get_annotation, annotation_id)
+    if not existing:
+        return {"status": "not_found", "annotation_id": annotation_id}
+
+    await _to_thread(_delete_annotation, annotation_id)
+    return {"status": "deleted", "annotation_id": annotation_id, "item_key": existing.get("item_key", "")}
+
+
+@mcp.tool()
+async def set_annotation_tags(
+    annotation_id: int,
+    tags: List[str],
+) -> Dict[str, Any]:
+    """Replace the set of theme tags on an annotation. New tag names are
+    created automatically; pass an empty list to clear all tags.
+
+    Args:
+        annotation_id: The id of the annotation to retag.
+        tags: List of theme-tag names to apply (replaces the current set).
+    """
+    from app.database import get_annotation, get_tags_for_annotation, set_annotation_tags as _set_tags
+    from app.repositories.annotations import create_tag
+
+    existing = await _to_thread(get_annotation, annotation_id)
+    if not existing:
+        return {"status": "not_found", "annotation_id": annotation_id}
+
+    tag_ids = []
+    for name in tags or []:
+        name = (name or "").strip()
+        if not name:
+            continue
+        tag_ids.append(await _to_thread(create_tag, name))
+    tag_ids = [t for t in tag_ids if t]
+
+    await _to_thread(_set_tags, annotation_id, tag_ids)
+    applied = await _to_thread(get_tags_for_annotation, annotation_id)
+    return {
+        "status": "updated",
+        "annotation_id": annotation_id,
+        "item_key": existing.get("item_key", ""),
+        "tags": [{"tag_id": t.get("tag_id"), "name": t.get("name", ""), "color": t.get("color", "")} for t in applied],
+    }
+
+
+@mcp.tool()
+async def import_annotations(item_key: str) -> Dict[str, Any]:
+    """Import annotations embedded in the item's PDF file (highlights, notes,
+    marks drawn in an external reader) into the TarCite library. Idempotent:
+    re-running skips annotations already imported.
+
+    Args:
+        item_key: The item_key of the library item whose PDF should be scanned.
+    """
+    from app.database import get_item_v2, import_item_annotations
+
+    if not await _to_thread(get_item_v2, item_key):
+        return {"status": "not_found", "item_key": item_key}
+
+    result = await _to_thread(import_item_annotations, item_key)
+    if result.get("error"):
+        return {"status": "error", "item_key": item_key, "message": result["error"], **result}
+    return {"status": "ok", "item_key": item_key, **result}
+
+
+# ── write tools: tags ───────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def list_tags() -> Dict[str, Any]:
+    """List all theme tags in the library, with their colour, parent tag, and
+    how many annotations / sources use each. Use this to discover tag names
+    you can pass to `set_annotation_tags` or `add_annotation`."""
+    from app.database import get_all_tags
+
+    tags = await _to_thread(get_all_tags)
+    out = [
+        {
+            "tag_id": t.get("tag_id"),
+            "name": t.get("name", ""),
+            "color": t.get("color", ""),
+            "parent_id": t.get("parent_id"),
+            "description": t.get("description", ""),
+            "inclusion_criteria": t.get("inclusion_criteria", ""),
+            "exclusion_criteria": t.get("exclusion_criteria", ""),
+            "annotation_count": t.get("annotation_count", 0),
+            "source_count": t.get("source_count", 0),
+        }
+        for t in tags
+    ]
+    return {"status": "ok", "count": len(out), "tags": out}
+
+
+@mcp.tool()
+async def create_tag(
+    name: str,
+    color: str = "",
+    parent_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Create a new theme tag (or return the existing tag id if the name
+    already exists, case-insensitively). Theme tags are used to code
+    annotations.
+
+    Args:
+        name: Tag name (required).
+        color: Hex colour string (e.g. "#FFEB3B"). Default "".
+        parent_id: Optional parent tag_id to nest this tag under.
+    """
+    from app.repositories.annotations import create_tag as _create_tag
+
+    name = (name or "").strip()
+    if not name:
+        return {"status": "error", "message": "name cannot be empty"}
+
+    tag_id = await _to_thread(_create_tag, name, color or "", parent_id)
+    return {"status": "created", "tag_id": tag_id, "name": name}
 
 
 # ── stdio entry point ───────────────────────────────────────────────────────

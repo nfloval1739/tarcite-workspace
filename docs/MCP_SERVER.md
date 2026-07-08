@@ -5,9 +5,12 @@ server, so any MCP client (Claude Desktop, Claude Code, Cursor, …) can use you
 private PDF library as a grounded, **fully-local** knowledge source.
 
 Nothing leaves your machine: the tools run in-process against the same
-SQLite + ChromaDB stores the app already uses.
+SQLite + ChromaDB stores the app already uses. Search and citation tools are
+read-only; the metadata- and annotation-editing tools write to the library.
 
 ## Tools
+
+### Read-only (search & cite)
 
 | Tool | What it does |
 |------|--------------|
@@ -19,9 +22,29 @@ SQLite + ChromaDB stores the app already uses.
 | `format_bibliography` | Formatted reference list for several items. |
 | `list_collections` | Collections (folders) and their keys (for the `collection_key` filter). |
 | `library_stats` | Item / collection / chunk counts and last sync time. |
+| `list_annotations` | All annotations (highlights, notes, ink) on an item, with tags, page, quote, comment. |
+| `list_tags` | All theme tags with colour, parent, and usage counts. |
+
+### Write (edit metadata & annotations)
+
+These mutate the library. They return the updated record so the agent can
+confirm the change.
+
+| Tool | What it does |
+|------|--------------|
+| `update_item_metadata` | Edit bibliographic fields of an item (title, year, `item_type`, `publication_title`, `doi`, `url`, `abstract`, `volume`/`issue`/`pages`, `publisher`, `place`, `edition`, `isbn`, `issn`, `extra`, and `creators`). Omitted fields are untouched. |
+| `set_item_notes` | Set or clear the free-text notes (and `note_connections` JSON) on an item. |
+| `set_item_favorite` | Favourite / unfavourite an item. |
+| `set_item_reading_status` | Set reading status to `""`, `"reading"`, or `"read"`. |
+| `add_annotation` | Add a highlight/note/ink annotation to an item, with quote, comment, colour, page, geometry, optional sentiment, and optional theme tags (new tags auto-created). |
+| `update_annotation` | Edit an existing annotation's type, quote, comment, colour, geometry, or sentiment. |
+| `delete_annotation` | Permanently delete an annotation (and its tag links). |
+| `set_annotation_tags` | Replace the theme tags on an annotation (new tag names auto-created; `[]` clears). |
+| `import_annotations` | Import annotations embedded in the item's PDF (idempotent). |
+| `create_tag` | Create a theme tag (or return the existing id if the name already exists). |
 
 Styles: `apa7, apa6, harvard, ieee, chicago, mla, vancouver, nature, acs, ama,
-elsevierharvard, springerauthordate`. All tools are **read-only**.
+elsevierharvard, springerauthordate`.
 
 ## Option A — stdio (recommended for Claude Desktop, zero network)
 

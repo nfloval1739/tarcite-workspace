@@ -28,6 +28,20 @@ def _tags_by_annotation_ids(conn, annotation_ids: List[int]) -> Dict[int, List[D
     return tags_by_annotation
 
 
+def get_annotation(annotation_id: int) -> Optional[Dict]:
+    """Return a single annotation with its tags, or None if it does not exist."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM annotations WHERE annotation_id = ?",
+            (annotation_id,),
+        ).fetchone()
+        if not row:
+            return None
+        annotation = dict(row)
+        annotation["tags"] = _tags_by_annotation_ids(conn, [annotation_id]).get(annotation_id, [])
+        return annotation
+
+
 def get_annotations_for_item(item_key: str) -> List[Dict]:
     with get_connection() as conn:
         rows = conn.execute(
