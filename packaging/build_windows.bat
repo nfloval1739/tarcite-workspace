@@ -105,6 +105,12 @@ if exist "dist\TarCiteWorkspace\ollama_models" (
     del /s /q "dist\TarCiteWorkspace\ollama_models\*partial*" >nul 2>nul
 )
 
+REM Remove deeply nested torch licenses to prevent MAX_PATH errors in Inno Setup
+echo     Removing deeply nested torch licenses...
+for /d %%D in ("dist\TarCiteWorkspace\_internal\torch*dist-info") do (
+    if exist "%%D\licenses" rmdir /s /q "%%D\licenses"
+)
+
 REM --- 6. Create installer with Inno Setup ----------------------------------
 echo [6/6] Creating Windows installer...
 where iscc >nul 2>nul
@@ -150,10 +156,10 @@ if "%SIGNTOOL%"=="1" (
 REM --- 8. Create MINIMAL installer (always, from the full build) ------------
 echo.
 echo === Building MINIMAL version (no bundled models) ===
-set "MINIMAL_STAGE=dist\minimal\TarCite Workspace"
+set "MINIMAL_STAGE=dist\min_stage"
 
-if exist "dist\minimal" rmdir /s /q "dist\minimal"
-mkdir "dist\minimal"
+if exist "dist\min_stage" rmdir /s /q "dist\min_stage"
+mkdir "dist\min_stage"
 xcopy /E /I /Q "dist\TarCiteWorkspace" "%MINIMAL_STAGE%"
 
 REM Strip models
@@ -163,7 +169,7 @@ if exist "%MINIMAL_STAGE%\_internal\models"        rmdir /s /q "%MINIMAL_STAGE%\
 if exist "%MINIMAL_STAGE%\_internal\ollama_models" rmdir /s /q "%MINIMAL_STAGE%\_internal\ollama_models"
 echo     Models stripped from minimal build.
 
-iscc packaging\setup.iss /DSrcDir="..\dist\minimal\TarCite Workspace" /DOutputBase="TarCiteWorkspace_minimal-Setup"
+iscc packaging\setup.iss /DSrcDir="..\dist\min_stage" /DOutputBase="TarCiteWorkspace_minimal-Setup"
 if errorlevel 1 (
     echo WARNING: Inno Setup failed for minimal build.
 ) else (
