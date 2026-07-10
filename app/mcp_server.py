@@ -730,18 +730,27 @@ async def add_annotation(
     an optional comment and theme tags. Returns the created annotation id.
 
     This writes a TarCite-side annotation record; it does not draw into the PDF
-    file on disk.
+    file on disk. You normally cannot supply on-page geometry from outside the
+    app — instead, make `quote` a VERBATIM passage from the PDF text: the next
+    time the PDF is opened in the app's viewer, the annotation is auto-anchored
+    (the quote is located in the PDF, the highlight rectangles are computed and
+    stored, and `page_index` is corrected if it was wrong). A paraphrased or
+    heavily edited quote cannot be located and will stay page-level only.
 
     Args:
         item_key: The item_key of the library item to annotate.
         annotation_type: One of "highlight", "note", "ink", "underline",
             "strikeout", or "text". Other short strings are stored verbatim.
         page_index: Zero-based PDF page number to attach the annotation to.
-        quote: The quoted passage text (for highlights / quotes).
+            A best guess is fine — auto-anchoring corrects it when the quote
+            is found on a different page.
+        quote: The quoted passage text, copied verbatim from the PDF (used
+            for display and for locating the highlight on the page).
         comment: A comment / note attached to the annotation.
         color: Hex colour string (e.g. "#FFEB3B") or "" for default.
         geometry_json: JSON string of the on-page geometry (rects / points),
-            as produced by the app's PDF viewer. Default "{}".
+            as produced by the app's PDF viewer. Default "{}" — leave it
+            empty to let the viewer auto-anchor from `quote`.
         sentiment: Optional free-text sentiment label (e.g. "positive",
             "critical"). Pass None to omit.
         tags: Optional list of theme-tag names to apply. New tag names are
@@ -790,21 +799,26 @@ async def update_annotation(
     quote: Optional[str] = None,
     comment: Optional[str] = None,
     color: Optional[str] = None,
+    page_index: Optional[int] = None,
     geometry_json: Optional[str] = None,
     sentiment: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Edit an existing annotation's type, quoted text, comment, colour,
-    geometry, or sentiment. Omitted fields are left unchanged. Use
+    page, geometry, or sentiment. Omitted fields are left unchanged. Use
     `set_annotation_tags` to change tags, and `list_annotations` to find the
     `annotation_id`.
 
     Args:
         annotation_id: The id of the annotation to edit.
         annotation_type: New annotation type (e.g. "highlight", "note").
-        quote: New quoted passage text.
+        quote: New quoted passage text. If you change the quote, also pass
+            geometry_json="{}" so the viewer re-anchors the highlight to the
+            new text on next open.
         comment: New comment / note text. Pass "" to clear.
         color: New hex colour (e.g. "#FFEB3B") or "" for default.
-        geometry_json: New on-page geometry JSON string.
+        page_index: New zero-based page number.
+        geometry_json: New on-page geometry JSON string ("{}" to let the
+            viewer re-anchor from the quote).
         sentiment: New sentiment label, or None / "" to clear.
     """
     from app.database import get_annotation, update_annotation as _update_annotation
@@ -818,6 +832,7 @@ async def update_annotation(
         "color": color if color is not None else existing.get("color", ""),
         "quote": quote if quote is not None else existing.get("quote", ""),
         "comment": comment if comment is not None else existing.get("comment", ""),
+        "page_index": int(page_index) if page_index is not None else None,
         "geometry_json": geometry_json if geometry_json is not None else existing.get("geometry_json", "{}"),
         "sentiment": sentiment if sentiment is not None else existing.get("sentiment"),
     }

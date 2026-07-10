@@ -47,6 +47,10 @@ def update_annotation_route(annotation_id: int, body: Dict[str, Any]) -> Dict:
     body.setdefault("quote", "")
     body.setdefault("comment", "")
     body.setdefault("geometry_json", "{}")
+    # page_index is optional: None keeps the stored page (COALESCE in SQL).
+    # The viewer sends it when auto-anchoring relocates a quote-only
+    # annotation (e.g. MCP-created) to the page its quote was found on.
+    body.setdefault("page_index", None)
     body["annotation_id"] = annotation_id
     update_annotation(annotation_id, body)
     return {"status": "updated", "annotation_id": annotation_id}

@@ -248,11 +248,17 @@ def update_annotation(annotation_id: int, data: Dict[str, Any]) -> None:
                    color = :color,
                    quote = :quote,
                    comment = :comment,
+                   page_index = COALESCE(:page_index, page_index),
                    geometry_json = :geometry_json,
                    sentiment = :sentiment,
                    updated_at = CURRENT_TIMESTAMP
                WHERE annotation_id = :annotation_id""",
-            {**data, "annotation_id": annotation_id, "sentiment": data.get("sentiment")},
+            {
+                **data,
+                "annotation_id": annotation_id,
+                "page_index": data.get("page_index"),
+                "sentiment": data.get("sentiment"),
+            },
         )
 
 

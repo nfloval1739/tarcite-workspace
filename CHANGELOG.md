@@ -43,6 +43,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   - The frontend polls sync status every 3 s only while a scan is running,
     backing off to 30 s when idle and pausing while the window is hidden.
 
+### Fixed
+- Annotations created outside the PDF viewer (MCP tools, API clients) now
+  anchor to the page automatically: when the PDF is opened, each quote-only
+  annotation's passage is located in the PDF text, its highlight rectangles
+  and (corrected) page number are stored, and it renders and click-navigates
+  exactly like a viewer-made highlight. Clicking an annotation whose quote
+  cannot be located falls back to the text-layer spotlight. The annotations
+  PATCH route and MCP `update_annotation` tool can now move an annotation to
+  a different page (`page_index`).
+
 ## [0.2.36] - 2026-07-06
 
 ### Added

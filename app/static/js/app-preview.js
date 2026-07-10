@@ -933,6 +933,9 @@ async function loadPdfPreview(itemKey) {
             appState.pdfItemKey = itemKey;
             appState.previewTotalPages = appState.pdfDoc.numPages;
             appState.pdfOutlineItems = await loadPdfOutline(appState.pdfDoc);
+            // Annotations may have loaded before the document was ready —
+            // anchor any quote-only (e.g. MCP-created) annotations now.
+            scheduleAnnotationAnchorResolution();
         }
         const pdf = appState.pdfDoc;
         document.getElementById('preview-page-info').textContent = `${appState.previewPage} / ${pdf.numPages}`;
@@ -2869,6 +2872,7 @@ function annotationPatchBody(annotation) {
         color: annotation.color || '',
         quote: annotation.quote || '',
         comment: annotation.comment || '',
+        page_index: Number.isFinite(annotation.page_index) ? annotation.page_index : null,
         geometry_json: annotation.geometry_json || '{}',
         sentiment: annotation.sentiment || null,
     };
@@ -3205,6 +3209,101 @@ async function getPdfTextMatchGeometry(searchText, pageNum) {
         console.error('PDF text geometry error:', err);
         return null;
     }
+}
+
+/* ── Auto-anchoring for quote-only annotations ───────────────────────────────
+   Annotations created outside the viewer (MCP tools, API clients) carry a
+   quote but no on-page geometry, so they can't be drawn on the PDF or
+   clicked-to. When a PDF opens, each such quote is located in the PDF text,
+   the resolved rects (and corrected page) are persisted back on the
+   annotation, and the overlays are redrawn — after which it behaves exactly
+   like a viewer-made highlight. */
+let _annAnchorResolveToken = 0;
+
+function scheduleAnnotationAnchorResolution() {
+    const token = ++_annAnchorResolveToken;
+    setTimeout(() => {
+        if (token === _annAnchorResolveToken) resolveUnanchoredAnnotations(token);
+    }, 600);
+}
+
+function annotationNeedsAnchor(a) {
+    if (!a.quote || !a.quote.trim()) return false;
+    if (a.annotation_type === 'draw') return false;
+    let geo = {};
+    try { geo = JSON.parse(a.geometry_json || '{}'); } catch { return false; }
+    if (geo.rects?.length || geo.points?.length) return false;
+    if (geo.doc_char_start != null || geo.doc_offset != null) return false; // doc-viewer anchored
+    return true;
+}
+
+async function resolveUnanchoredAnnotations(token) {
+    if (appState.previewKind !== 'pdf' || !appState.pdfDoc) return;
+    const itemKey = appState.pdfItemKey;
+    const pending = appState.annotations.filter(annotationNeedsAnchor).slice(0, 25);
+    if (!pending.length) return;
+
+    let resolvedCount = 0;
+    for (const ann of pending) {
+        // Abort if another resolution started or the user switched PDFs
+        if (token !== _annAnchorResolveToken || appState.pdfItemKey !== itemKey) return;
+        try {
+            const anchor = await resolveAnnotationAnchor(ann);
+            if (!anchor) continue;
+            const geometryJson = JSON.stringify(anchor.geometry);
+            await patchAnnotation({ ...ann, page_index: anchor.pageIndex, geometry_json: geometryJson });
+            const live = appState.annotations.find(x => x.annotation_id === ann.annotation_id);
+            if (live) { live.page_index = anchor.pageIndex; live.geometry_json = geometryJson; }
+            resolvedCount++;
+        } catch (err) {
+            console.warn('Annotation anchor resolution failed for', ann.annotation_id, err);
+        }
+    }
+    if (resolvedCount && token === _annAnchorResolveToken && appState.pdfItemKey === itemKey) {
+        renderAnnotations();
+    }
+}
+
+async function resolveAnnotationAnchor(ann) {
+    const quote = ann.quote.trim().slice(0, 500);
+    const hintPage = (ann.page_index || 0) + 1;
+
+    let geometry = await getPdfTextMatchGeometry(quote, hintPage);
+    if (geometry) return { pageIndex: hintPage - 1, geometry };
+
+    const pageNum = await findPageForQuote(quote, hintPage);
+    if (!pageNum) return null;
+    geometry = await getPdfTextMatchGeometry(quote, pageNum);
+    return geometry ? { pageIndex: pageNum - 1, geometry } : null;
+}
+
+async function findPageForQuote(quote, skipPage) {
+    const pdf = appState.pdfDoc;
+    if (!pdf) return null;
+    const keywords = quote.toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length > 4);
+    if (!keywords.length) return null;
+
+    const threshold = Math.ceil(keywords.length * 0.65);
+    const total = Math.min(pdf.numPages, 300);
+    let bestPage = null, bestScore = 0;
+    for (let p = 1; p <= total; p++) {
+        if (p === skipPage) continue; // already tried directly
+        try {
+            const page = await pdf.getPage(p);
+            const text = (await page.getTextContent()).items.map(i => i.str).join(' ').toLowerCase();
+            let score = 0;
+            for (const w of keywords) if (text.includes(w)) score++;
+            if (score > bestScore) {
+                bestScore = score;
+                bestPage = p;
+                if (score === keywords.length) break;
+            }
+        } catch { /* unreadable page — keep scanning */ }
+    }
+    return bestScore >= threshold ? bestPage : null;
 }
 
 function findExactTokenRanges(tokens, searchText) {
@@ -4270,6 +4369,9 @@ async function loadAnnotations(itemKey) {
             appState.annotationPanelOpen = true;
             toggleAnnotationPanel();
         }
+        if (appState.previewKind === 'pdf' && appState.pdfDoc && appState.pdfItemKey === itemKey) {
+            scheduleAnnotationAnchorResolution();
+        }
     } catch (err) {
         console.error('Load annotations error:', err);
     }
@@ -5259,7 +5361,14 @@ function navigateToAnnotation(id) {
     if (!ann) return;
     if (appState.previewKind === 'pdf') scrollToPage(ann.page_index + 1, true);
     const overlay = document.querySelector(`[data-annotation-id="${id}"]`);
-    if (overlay) { overlay.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    if (overlay) { overlay.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    // No drawn overlay yet (quote-only annotation whose anchor could not be
+    // resolved): fall back to the text-layer spotlight so the click still
+    // lands on the quoted passage.
+    if (appState.previewKind === 'pdf' && ann.quote && appState.pdfDoc) {
+        appState.spotlightText = ann.quote.trim();
+        jumpToSpotlightPage();
+    }
 }
 
 function toggleAnnColorPicker(id) {
