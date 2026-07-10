@@ -1248,7 +1248,7 @@ async function startSync(dirPath = '') {
             statusEl.textContent = data.message || 'Scan started.';
             statusEl.className = data.status === 'already_running' ? 'library-sync-status warning' : 'library-sync-status syncing';
         }
-        updateSyncStatus();
+        kickSyncStatusPolling();
     } catch (err) {
         if (statusEl) {
             statusEl.textContent = 'Error: ' + err.message;
@@ -1297,7 +1297,9 @@ async function updateSyncStatus() {
             el.textContent = '';
             if (libEl && !libEl.textContent) libEl.className = 'library-sync-status';
         }
+        return data.running === true;
     } catch (err) { /* silent */ }
+    return false;
 }
 
 async function repairVectorIndex() {
@@ -1315,7 +1317,7 @@ async function repairVectorIndex() {
             statusEl.textContent = data.message || 'Repair started.';
             statusEl.className = data.status === 'already_running' ? 'library-sync-status warning' : 'library-sync-status syncing';
         }
-        updateSyncStatus();
+        kickSyncStatusPolling();
     } catch (err) {
         if (statusEl) {
             statusEl.textContent = 'Error: ' + err.message;

@@ -806,7 +806,7 @@ async function indexHealthFile(filePath, sourceDir = '') {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Indexing failed');
         alert('Indexing started in the background. Run Scan Health again after it finishes.');
-        updateSyncStatus();
+        kickSyncStatusPolling();
     } catch (err) {
         alert(`Indexing failed: ${err.message}`);
     }

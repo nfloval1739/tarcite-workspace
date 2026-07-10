@@ -957,8 +957,43 @@ async def create_tag(
 
 
 def main() -> None:
-    """Run the MCP server over stdio (for local MCP clients)."""
+    """Run the MCP server over stdio (for local MCP clients).
+
+    When the desktop app is already running, forward the session to its /mcp
+    HTTP endpoint instead of loading a second SQLite/Chroma/torch stack in this
+    process (see app.mcp_proxy). Standalone serving is the fallback, and can be
+    forced with MCP_STDIO_NO_PROXY=1.
+    """
+    import os as _os
+
     logging.basicConfig(level=logging.INFO)
+
+    from app.mcp_proxy import (
+        ProxyUnavailableError,
+        detect_running_app_mcp_url,
+        run_stdio_proxy,
+        start_orphan_watchdog,
+    )
+
+    start_orphan_watchdog()
+
+    no_proxy = _os.getenv("MCP_STDIO_NO_PROXY", "").strip().lower() in ("1", "true", "yes", "on")
+    if not no_proxy:
+        url = detect_running_app_mcp_url()
+        if url:
+            try:
+                run_stdio_proxy(url)
+                return  # client disconnected cleanly
+            except ProxyUnavailableError as exc:
+                logging.getLogger(__name__).info(
+                    "MCP proxy could not connect (%s); serving standalone", exc
+                )
+            except Exception:
+                # Mid-session failure: the client's session state is tied to
+                # the proxy, so exit and let the client respawn us fresh.
+                logging.getLogger(__name__).exception("MCP stdio proxy ended")
+                return
+
     mcp.run()
 
 

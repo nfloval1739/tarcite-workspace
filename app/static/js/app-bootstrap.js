@@ -25,16 +25,38 @@ document.addEventListener('DOMContentLoaded', () => {
     initCitationProfileDropdown();
     loadModels();
     handleWorkspaceDeepLink();
-    updateSyncStatus();
     preloadSecondaryWorkspaceData();
     initProjectNotesColorControl();
     refreshIcons();
-    setInterval(updateSyncStatus, 3000);
+    pollSyncStatus();
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) pollSyncStatus();
+    });
     setInterval(loadQuotaBalance, 300000);
     initInkDragListeners();
     initInkScrollListeners();
     initGlobalSearch();
 });
+
+/* Adaptive sync-status polling: 3 s while a scan/repair is running, 30 s when
+   idle, paused while the window is hidden. Actions that start a scan call
+   kickSyncStatusPolling() for an immediate poll + fast cadence. */
+let _syncPollTimer = null;
+const SYNC_POLL_ACTIVE_MS = 3000;
+const SYNC_POLL_IDLE_MS = 30000;
+
+async function pollSyncStatus() {
+    clearTimeout(_syncPollTimer);
+    let running = false;
+    if (!document.hidden) {
+        try { running = (await updateSyncStatus()) === true; } catch (err) { /* silent */ }
+    }
+    _syncPollTimer = setTimeout(pollSyncStatus, running ? SYNC_POLL_ACTIVE_MS : SYNC_POLL_IDLE_MS);
+}
+
+function kickSyncStatusPolling() {
+    pollSyncStatus();
+}
 
 function runWhenIdle(fn, delayMs = 0) {
     const run = () => {

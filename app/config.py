@@ -240,6 +240,22 @@ class Config:
         self.embedding_provider: str = s.get("embedding_provider", "local")
         self.embedding_model: str = s.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
         self.reranker_model: str = s.get("reranker_model", DEFAULT_RERANKER_MODEL)
+
+        # Thermal/efficiency controls. preload_models=off defers the heavy
+        # embedding+reranker load from launch to first use; idle unload frees
+        # the model weights (and MPS/CUDA cache) after N minutes without a
+        # search or sync (0 = keep loaded forever).
+        _preload_env = os.getenv("PRELOAD_MODELS")
+        if _preload_env is not None:
+            self.preload_models: bool = _preload_env.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            self.preload_models = bool(s.get("preload_models", False))
+        try:
+            self.model_idle_unload_minutes: int = max(0, int(
+                os.getenv("MODEL_IDLE_UNLOAD_MINUTES") or s.get("model_idle_unload_minutes", 20)
+            ))
+        except (TypeError, ValueError):
+            self.model_idle_unload_minutes = 20
         self.crossref_mailto: str = s.get("crossref_mailto", "info@tarcite.com") or "info@tarcite.com"
         try:
             self.crossref_timeout_seconds: float = max(1.0, float(s.get("crossref_timeout_seconds", 5)))

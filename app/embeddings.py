@@ -307,6 +307,13 @@ def ensure_embedding_model_ready() -> None:
         _get_local_model()
 
 
+def _unload_local_model() -> None:
+    """Drop the resident embedding model (idle unload); reloads on next use."""
+    global _local_model, _local_model_name
+    _local_model = None
+    _local_model_name = ""
+
+
 def _get_local_model():
     global _local_model, _local_model_name
     model_name = config.embedding_model or "all-MiniLM-L6-v2"
@@ -324,6 +331,9 @@ def _get_local_model():
         _local_model = SentenceTransformer(resolved_model, device=device)
         _local_model_name = model_name
         logger.info("Local embedding model ready (dim=%d)", _local_model.get_sentence_embedding_dimension())
+
+    from app import model_lifecycle
+    model_lifecycle.touch("embedding-model", _unload_local_model)
     return _local_model
 
 

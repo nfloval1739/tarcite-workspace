@@ -66,6 +66,15 @@ def _get_client() -> OpenAI:
     is_managed = _is_managed_api(base_url)
 
     is_local = _is_local_ollama(base_url)
+    if is_local:
+        # Ollama starts lazily (launch only starts it for local profiles); if
+        # the user switched to a local profile mid-session, bring it up now.
+        # Fast path when already running: a single local socket check.
+        try:
+            from app.ollama_manager import ensure_running
+            ensure_running()
+        except Exception as exc:
+            logger.warning("Could not ensure Ollama is running: %s", exc)
     if not cfg.ai_api_key and not is_managed and not is_local:
         raise ValueError(
             "AI API key is not configured. Go to Settings and enter your API key."

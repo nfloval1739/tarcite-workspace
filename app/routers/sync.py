@@ -21,6 +21,7 @@ _sync_state: Dict[str, Any] = {
 
 
 def _run_sync(force_resync: bool, dir_path: Optional[str] = None) -> None:
+    from app.pdf_extract import shutdown_pdf_worker
     from app.sync import sync_library
 
     def progress_cb(step: str, detail: str = "") -> None:
@@ -35,6 +36,7 @@ def _run_sync(force_resync: bool, dir_path: Optional[str] = None) -> None:
         _sync_state["result"] = {"status": "error", "error": str(exc)}
     finally:
         _sync_state["running"] = False
+        shutdown_pdf_worker()
 
 
 @router.post("/api/sync")

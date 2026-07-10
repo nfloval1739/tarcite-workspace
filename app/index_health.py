@@ -59,6 +59,41 @@ def _worker_command():
     return [sys.executable, "-m", "app.index_health", WORKER_ARG], env
 
 
+# ── Clean-shutdown marker ─────────────────────────────────────────────────────
+# The subprocess probe exists to catch HNSW corruption that segfaults on read —
+# damage that, in practice, comes from crashes/power loss, not clean exits. So
+# the marker lets startup skip the probe (a full frozen-binary re-spawn) when
+# the previous session ended cleanly; the in-process size guard in
+# app.embeddings still runs on every Chroma access either way.
+
+def _clean_shutdown_marker_path() -> Path:
+    from app.config import DATA_DIR
+
+    return DATA_DIR / ".clean-shutdown"
+
+
+def mark_clean_shutdown() -> None:
+    """Record that the app is exiting cleanly. Called from every quit path."""
+    try:
+        _clean_shutdown_marker_path().write_text("ok", encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Could not write clean-shutdown marker: %s", exc)
+
+
+def consume_clean_shutdown_marker() -> bool:
+    """True if the previous session exited cleanly. Deletes the marker, so a
+    crash before the next clean exit forces a full probe on the start after."""
+    path = _clean_shutdown_marker_path()
+    try:
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+    except OSError as exc:
+        logger.warning("Could not read clean-shutdown marker: %s", exc)
+        return False
+
+
 def chroma_index_is_healthy(timeout: float = _DEFAULT_TIMEOUT) -> bool:
     """Return True if the vector index opens and reads in an isolated subprocess.
     A native crash (negative return code) or clean error means unhealthy."""

@@ -5,9 +5,7 @@ Starts Ollama + FastAPI server, then opens a native pywebview window.
 
 import multiprocessing
 import os
-import signal
 import ssl
-import subprocess
 import sys
 import threading
 import time
@@ -88,78 +86,34 @@ def _log(message: str) -> None:
 
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
+# Lifecycle lives in app.ollama_manager (shared with on-demand starts from
+# ai_client). At launch, Ollama is only started when the active AI profile
+# actually points at local Ollama; remote profiles skip it entirely and the
+# manager starts it on demand if the user switches to a local profile later.
 
-_ollama_proc: "subprocess.Popen | None" = None
 _tray_icon = None
 
 
-def _find_ollama_binary() -> "Path | None":
-    bundle_dir = get_bundle_dir()
-    name = "ollama.exe" if sys.platform == "win32" else "ollama"
-    p = bundle_dir / "ollama" / name
-    return p if p.exists() else None
-
-
-def _kill_existing_ollama() -> None:
-    """Terminate any Ollama process already on port 11434 before we start ours.
-
-    Without this, a stale process from a previous app version (or a system
-    install) keeps running with the wrong OLLAMA_MODELS path and our bundled
-    models are never visible.
-    """
-    try:
-        result = subprocess.run(
-            ["lsof", "-ti", "tcp:11434"], capture_output=True, text=True
-        )
-        for pid_str in result.stdout.strip().split():
-            if not pid_str.isdigit():
-                continue
-            pid = int(pid_str)
-            try:
-                comm = subprocess.run(
-                    ["ps", "-p", str(pid), "-o", "comm="],
-                    capture_output=True, text=True,
-                ).stdout.strip()
-                if "ollama" in comm.lower():
-                    os.kill(pid, signal.SIGTERM)
-                    _log(f"Terminated stale Ollama PID {pid} ({comm})")
-            except Exception:
-                pass
-        if result.stdout.strip():
-            time.sleep(1.0)
-    except Exception:
-        pass
-
-
 def _start_ollama() -> None:
-    global _ollama_proc
-    binary = _find_ollama_binary()
-    if not binary:
-        _log("Ollama binary not bundled; skipping Ollama startup")
-        return
-    _kill_existing_ollama()
-    env = os.environ.copy()
-    env.setdefault("OLLAMA_HOST", "127.0.0.1:11434")
-    env.setdefault("OLLAMA_ORIGINS", "*")
     try:
-        _ollama_proc = subprocess.Popen(
-            [str(binary), "serve"], env=env,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        _log(f"Started Ollama from {binary} (OLLAMA_MODELS={env.get('OLLAMA_MODELS', 'default')})")
+        from app.ollama_manager import active_profile_is_local, ensure_running
+
+        if not active_profile_is_local():
+            _log("Ollama not started (active AI profile is remote); will start on demand")
+            return
+        ready = ensure_running(replace_stale=True)
+        _log(f"Ollama startup: {'ready' if ready else 'unavailable'}")
     except Exception:
         _log("Failed to start Ollama:\n" + traceback.format_exc())
 
 
 def _stop_ollama() -> None:
-    global _ollama_proc
-    if _ollama_proc is not None:
-        try:
-            _ollama_proc.terminate()
-            _ollama_proc.wait(timeout=5)
-        except Exception:
-            pass
-        _ollama_proc = None
+    try:
+        from app.ollama_manager import stop
+
+        stop()
+    except Exception:
+        pass
 
 
 # ── FastAPI server ────────────────────────────────────────────────────────────
@@ -274,6 +228,7 @@ def _start_menu_bar_icon(window, get_ready_url) -> None:
             except Exception:
                 pass
             _stop_ollama()
+            _mark_clean_shutdown()
             os._exit(0)
 
         menu = pystray.Menu(
@@ -291,6 +246,17 @@ def _start_menu_bar_icon(window, get_ready_url) -> None:
         _log("Menu bar status item started")
     except Exception:
         _log("Could not start menu bar status item:\n" + traceback.format_exc())
+
+
+def _mark_clean_shutdown() -> None:
+    """Record a clean exit so the next launch can skip the crash-recovery
+    Chroma probe (a full frozen-binary re-spawn)."""
+    try:
+        from app.index_health import mark_clean_shutdown
+
+        mark_clean_shutdown()
+    except Exception:
+        _log("Could not write clean-shutdown marker:\n" + traceback.format_exc())
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -385,6 +351,13 @@ def main():
     _start_menu_bar_icon(window, lambda: ready_url_holder["url"])
 
     webview.start()
+
+    # Window closed: stop Ollama (it used to linger until the next launch's
+    # stale-process sweep), record a clean exit, and end the process rather
+    # than leaving a headless server + tray thread behind.
+    _stop_ollama()
+    _mark_clean_shutdown()
+    os._exit(0)
 
 
 if __name__ == "__main__":

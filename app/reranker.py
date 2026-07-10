@@ -70,6 +70,11 @@ def _resolve_local_hf_snapshot(model_name: str) -> str:
     return model_name
 
 
+def _unload_rerankers() -> None:
+    """Drop resident cross-encoders (idle unload); reload on next use."""
+    _reranker_cache.clear()
+
+
 def _get_reranker(model_name: str):
     if not model_name or model_name.lower() == "none":
         return None
@@ -80,6 +85,9 @@ def _get_reranker(model_name: str):
         logger.info("Loading reranker model: %s (resolved=%s, device=%s)", model_name, resolved_model, device)
         _reranker_cache[model_name] = CrossEncoder(resolved_model, device=device)
         logger.info("Reranker ready")
+
+    from app import model_lifecycle
+    model_lifecycle.touch("reranker-model", _unload_rerankers)
     return _reranker_cache[model_name]
 
 

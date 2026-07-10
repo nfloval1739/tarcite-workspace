@@ -166,11 +166,21 @@ def on_startup() -> None:
         reconcile_item_collections()  # self-heal folder membership drift
     except Exception as exc:
         logger.warning("item_collections reconcile failed: %s", exc)
-    threading.Thread(target=_preload_models, daemon=True).start()
+    # Eager preload burns ~1 min of CPU per launch loading bge-large + the
+    # reranker; default off — models load lazily on first search/sync instead.
+    if config.preload_models:
+        threading.Thread(target=_preload_models, daemon=True).start()
     threading.Thread(target=_register_ciwork_device, daemon=True).start()
     threading.Thread(target=refresh_crossref_counts_for_library, daemon=True).start()
     threading.Thread(target=_auto_heal_vectors, daemon=True).start()
     logger.info("TarCite Workspace ready at http%s://%s:%s", "s" if config.use_https else "", config.app_host, config.app_port)
+
+
+@app.on_event("shutdown")
+def _record_clean_shutdown() -> None:
+    from app.index_health import mark_clean_shutdown
+
+    mark_clean_shutdown()
 
 
 def _auto_heal_vectors() -> None:
@@ -184,9 +194,12 @@ def _auto_heal_vectors() -> None:
             chroma_index_was_quarantined,
             force_quarantine_chroma_index,
         )
-        from app.index_health import chroma_index_is_healthy
+        from app.index_health import chroma_index_is_healthy, consume_clean_shutdown_marker
 
-        if not chroma_index_is_healthy():
+        # The subprocess probe is a full frozen-binary re-spawn; only pay for
+        # it when the previous session did not exit cleanly (crash/power loss —
+        # the only realistic sources of read-segfault corruption).
+        if not consume_clean_shutdown_marker() and not chroma_index_is_healthy():
             force_quarantine_chroma_index("startup health probe failed")
 
         get_chroma_client()  # triggers the size-based corruption guard
