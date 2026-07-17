@@ -613,6 +613,40 @@ function initChatForm() {
     setChatHistoryVisible(false);
 }
 
+async function _applyChatCreatedLinksAndHighlights(data) {
+    try {
+        if (Array.isArray(data.created_annotations) && data.created_annotations.length) {
+            if (appState.previewItem?.item_key && appState.previewItem.item_key === data.created_annotations[0].item_key) {
+                await loadAnnotations(appState.previewItem.item_key);
+            }
+        }
+        const notesChanged = (Array.isArray(data.notes_rewritten) && data.notes_rewritten.length)
+            || (Array.isArray(data.created_connections) && data.created_connections.length);
+        if (notesChanged && appState.previewItem?.item_key && typeof loadItemNotesForPreview === 'function') {
+            // Reload through the same canonical loader used everywhere else notes
+            // get shown (including on a fresh page load, where this reliably
+            // works). It fetches fresh from the backend (which already persisted
+            // everything via patch_item_notes — do NOT call
+            // saveProjectNotesAndConnections here, that would push stale
+            // frontend content back over what the backend just wrote), sets
+            // notesScope correctly, and re-syncs noteConnections + ink lines
+            // itself. A hand-rolled fetch+innerHTML here previously wrote into
+            // whatever getNotesContentEl() resolved to *before* notesScope was
+            // ever set to 'item' (e.g. if the user chatted without having
+            // opened the Notes tab yet), landing nowhere the user could see it.
+            // The input listener is delegated at the container level via
+            // oninput="onNotesInput()" in renderItemNotesEditor(), so per-child
+            // listeners aren't needed here either.
+            await loadItemNotesForPreview();
+        }
+        if (appState.previewKind === 'pdf' && appState.pdfDoc && typeof scheduleAnnotationAnchorResolution === 'function') {
+            scheduleAnnotationAnchorResolution();
+        }
+    } catch (err) {
+        console.warn('applyChatCreatedLinksAndHighlights error:', err);
+    }
+}
+
 async function sendChatMessage() {
     const input = document.getElementById('chat-input');
     const message = input.value.trim();
@@ -639,6 +673,8 @@ async function sendChatMessage() {
     const reqStart = Date.now();
 
     try {
+        const openItemKey = appState.previewItem?.item_key || '';
+        const toolsEnabled = !!openItemKey;
         const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -648,8 +684,10 @@ async function sendChatMessage() {
                 candidates: appState.currentCandidates,
                 suggestions: allSuggestions,
                 history: appState.chatMessages.slice(-8),
-                current_item_key: appState.previewItem?.item_key || '',
+                current_item_key: openItemKey,
                 profile_override: selectedProfile,
+                allow_tools: toolsEnabled,
+                enable_ink_links: toolsEnabled,
             }),
         });
 
@@ -675,6 +713,10 @@ async function sendChatMessage() {
         const replyTime = new Date();
         appState.chatMessages.push({ role: 'assistant', content: data.reply, time: replyTime, duration: Date.now() - reqStart });
         renderChatMessages();
+
+        if (data.created_annotations || data.created_connections || data.notes_rewritten) {
+            await _applyChatCreatedLinksAndHighlights(data);
+        }
 
         if (!appState.chatSessionId) {
             const sessionRes = await fetch('/api/chat-sessions', {

@@ -5,7 +5,7 @@ AI API client for citation suggestion.
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from openai import OpenAI
 
@@ -472,12 +472,64 @@ Rules:
 """
 
 
+_CHAT_TOOL_SYSTEM_SUFFIX = (
+    "\n\nYou have tools available:\n"
+    "  - write_item_notes: write structured content directly into the item's @note panel (the dedicated 'Notes' "
+    "tab shown alongside the open PDF — NOT this chat reply). Use this whenever the user asks to 'create an "
+    "@note', 'make a study @note', 'write a summary in the @note', 'add to the @note', or otherwise wants "
+    "content saved into the per-item @note editor. Pass content as plain text (newlines OK) or basic HTML "
+    "(p, ul, li, strong, em, h1-h3). Use mode='append' to add to existing @note content (default) or "
+    "mode='replace' to overwrite.\n"
+    "  - add_quote_highlight: create a quote-only highlight on the open PDF. Pass a VERBATIM quote from the "
+    "document text above (must match the PDF text exactly) plus an optional comment. Returns annotation_id.\n"
+    "  - add_note_pointer_with_ink: add an ink-linked pointer to the item's @note panel, linked to a highlight "
+    "created by add_quote_highlight. The pointer becomes a dot in the @note with a line drawn to the "
+    "highlight's location on the PDF. IMPORTANT: set replace_existing=true when the pointer_text already "
+    "exists in the @note (e.g. the user asked to 'link', 'connect', or 'add ink connection to' existing "
+    "summary points) — this converts the existing @note text block into an ink-linked pointer IN PLACE "
+    "without duplicating it. Use replace_existing=false (default) only when creating brand-new pointers.\n"
+    "Terminology: '@note' always refers to the per-item Notes panel content — the dedicated editor alongside the "
+    "PDF. It does NOT mean this chat reply, an annotation comment, or any other text. When the user says 'note' "
+    "or 'notes', they most likely mean the @note panel.\n"
+    "When the user asks you to add pointers / highlights / ink connections to the open document, call "
+    "add_quote_highlight first for each pointer, then add_note_pointer_with_ink with the returned annotation_id. "
+    "If the EXISTING @NOTE CONTENT section above shows that the pointer_text is already present in the @note, "
+    "you MUST set replace_existing=true to avoid duplicating it. Always copy the supporting quote VERBATIM from "
+    "the document text; never paraphrase. When the user asks to 'create an @note' or 'write in the @note', use "
+    "write_item_notes INSTEAD of just typing the content into the chat reply — the user wants the content saved "
+    "into the @note panel, not echoed back. After tool calls, write only a brief plain-text confirmation (one "
+    "or two lines) of what you created; do NOT repeat the @note content itself back to the user."
+)
+
+
+def _html_to_plain_text(html_content: str) -> str:
+    """Render @note HTML as plain text for the prompt.
+
+    The @note panel stores content as HTML, but showing that raw markup to the
+    model invites it to copy literal tags (e.g. "<p><strong>Research Focus:</strong>
+    ...") into pointer_text when asked to link existing content — which then never
+    matches anything, since matching is done against the panel's plain text.
+    """
+    import html as _html
+
+    text = re.sub(r"(?i)<br\s*/?>", "\n", html_content)
+    text = re.sub(r"(?i)</(p|div|li|h[1-6])>", "\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = _html.unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def chat_about_citations(
     message: str,
     paragraph: str,
     candidates: List[Dict[str, Any]],
     suggestions: List[Dict[str, Any]],
     history: List[Dict[str, str]],
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tool_executor: Optional[Callable[[str, Dict[str, Any]], Dict[str, Any]]] = None,
+    existing_notes: str = "",
 ) -> str:
     has_paragraph = bool(paragraph)
     has_suggestions = bool(suggestions)
@@ -502,6 +554,18 @@ def chat_about_citations(
                else "(No extracted text available for this document.)")
         )
 
+    existing_note_section = ""
+    if existing_notes:
+        existing_note_section = (
+            f"\n\n=== EXISTING @NOTE CONTENT ===\n"
+            f"The item's @note panel currently contains the following content, shown here as plain text (the "
+            f"panel actually stores it as HTML — do NOT include HTML tags like <p> or <strong> in pointer_text, "
+            f"copy only the plain text shown below). Use this to understand what the user has already written, "
+            f"avoid duplicating it, and build on it when asked to add or append. Do NOT repeat this content back "
+            f"to the user unless they ask.\n"
+            f"--- @NOTE CONTENT ---\n{_html_to_plain_text(existing_notes)[:6000]}\n--- END @NOTE CONTENT ---"
+        )
+
     cand_lines = ""
     for i, c in enumerate(other_candidates[:14], 1):
         cand_lines += f"\n[{i}] {c.get('inline_citation', '')} | {c.get('title', '')[:70]}"
@@ -522,32 +586,124 @@ def chat_about_citations(
         system = (
             _CHAT_STANDALONE_SYSTEM
             + current_doc_section
+            + existing_note_section
             + other_sources_label
         )
     else:
         system = (
             _CHAT_SYSTEM
             + current_doc_section
+            + existing_note_section
             + f"\n\nPARAGRAPH:\n{paragraph}"
             + f"\n\nCANDIDATE SOURCES ({len(other_candidates)} retrieved):{cand_lines if cand_lines else ' None.'}"
             + f"\n\nSUGGESTIONS MADE:{sug_lines if sug_lines else ' None.'}"
         )
 
-    messages = [{"role": "system", "content": system}]
+    tools_enabled = bool(tools) and callable(tool_executor)
+    if tools_enabled:
+        system += _CHAT_TOOL_SYSTEM_SUFFIX
+
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
     for h in history[-8:]:
         messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": message})
 
     client = _get_client()
+    completion_kwargs: Dict[str, Any] = {
+        "model": config.ai_model,
+        "messages": messages,
+        "temperature": config.chat_temperature,
+        # Tool-enabled turns can need to emit many tool calls (each with a verbatim
+        # quote) in one completion; 2000 is comfortable for prose but a batch of
+        # highlight+pointer calls can get cut off mid-generation well before that
+        # normally would matter for plain chat.
+        "max_tokens": 4096 if tools_enabled else 2000,
+    }
+    if tools_enabled:
+        completion_kwargs["tools"] = tools
+        completion_kwargs["tool_choice"] = "auto"
+
+    tool_call_count = 0
     try:
-        response = _create_chat_completion(
-            client,
-            model=config.ai_model,
-            messages=messages,
-            temperature=config.chat_temperature,
-            max_tokens=2000,
-        )
-        raw = response.choices[0].message.content or ""
+        for _ in range(6):
+            response = _create_chat_completion(client, **completion_kwargs)
+            choice = response.choices[0]
+            msg = choice.message
+            tool_calls = getattr(msg, "tool_calls", None)
+            if not tools_enabled or not tool_calls:
+                raw = (msg.content or "").strip()
+                if not raw and tools_enabled and getattr(choice, "finish_reason", None) == "length":
+                    # Truncated mid-generation (often mid-tool-call) rather than a
+                    # genuine "nothing more to do" — msg.content/tool_calls both come
+                    # back empty either way, so without this check it's silently
+                    # indistinguishable from a normal empty-content finish.
+                    logger.warning("Chat completion truncated by max_tokens while tools were enabled")
+                    raw = (
+                        "My response got cut off before I could finish — that's usually because "
+                        "there were too many actions to fit in one reply. Try asking for fewer at "
+                        "once (e.g. a few points at a time) and I'll pick up from there."
+                    )
+                return _clean_chat_response(_deduplicate_chat_response(raw))
+            tool_call_count += len(tool_calls)
+
+            # Append the assistant tool_call message exactly as returned so the
+            # OpenAI API accepts the follow-up tool messages on the next round.
+            assistant_msg: Dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
+            try:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments or "{}",
+                        },
+                    }
+                    for tc in tool_calls
+                ]
+            except Exception:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"].get("arguments", "{}") or "{}",
+                        },
+                    }
+                    for tc in tool_calls
+                ]
+            messages.append(assistant_msg)
+
+            for tc in tool_calls:
+                try:
+                    name = tc.function.name
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                    except Exception:
+                        args = {}
+                    logger.info("Chat tool call: %s args=%s", name, args)
+                    result = tool_executor(name, args)
+                except Exception as exc:
+                    logger.warning("Chat tool execution failed: %s", exc)
+                    result = {"error": str(exc)}
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(result)[:4000],
+                })
+            # Loop continues: model either requests more tools or finishes.
+        # Tool-call budget exhausted while the model still wanted to act — every
+        # round up to here had tool_calls, so tool_call_count reflects real DB
+        # writes the user won't otherwise be told about (msg.content is often
+        # empty on a pure tool-call turn).
+        raw = (msg.content or "").strip()
+        if not raw:
+            raw = (
+                f"Done — completed {tool_call_count} action(s) on this item, but hit the "
+                "tool-call limit before I could reply. Check the Notes panel and PDF for "
+                "the changes, and ask again if anything's left to do."
+            )
         return _clean_chat_response(_deduplicate_chat_response(raw))
     except Exception as exc:
         logger.error("chat_about_citations error: %s", exc)

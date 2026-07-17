@@ -166,6 +166,8 @@ class ChatRequest(BaseModel):
     profile_override: str = Field("", description="Profile name to use instead of active profile")
     model_override: str = Field("", description="Model name to use for this chat request")
     restrict_to_document: bool = Field(False, description="Limit retrieval to the currently open document only")
+    allow_tools: bool = Field(False, description="Enable LLM tool-calling (annotations, note pointers) on the open item")
+    enable_ink_links: bool = Field(False, description="Allow the model to create quote highlights and ink-connected note pointers on the open item")
 
 
 class CheckRelevanceRequest(BaseModel):

@@ -4615,7 +4615,13 @@ async function loadItemNotesForPreview() {
         if (!res.ok) throw new Error('Could not load document notes');
         const data = await res.json();
         if (appState.activeNotesItemKey !== itemKey) return;
-        content.innerHTML = data.notes || '';
+        // Re-resolve the target element rather than reuse the reference captured
+        // before the fetch: a tab switch (or another caller re-rendering the
+        // notes panel) while this was in flight would have replaced it, and
+        // writing into the old, now-detached node would silently do nothing.
+        const liveContent = document.getElementById('item-notes-content') || content;
+        if (!document.body.contains(liveContent)) return;
+        liveContent.innerHTML = data.notes || '';
         appState.previewItem.notes = data.notes || '';
         appState.previewItem.note_connections = data.note_connections || '[]';
         loadNoteConnections({ note_connections: data.note_connections || '[]' });
@@ -4884,6 +4890,38 @@ function renderPdfChatProfileSelect(models = null, activeProfile = null) {
     select.onchange = () => activateProfile(select.value);
 }
 
+async function _applyPdfChatCreatedLinksAndHighlights(data) {
+    try {
+        if (Array.isArray(data.created_annotations) && data.created_annotations.length) {
+            const itk = data.created_annotations[0].item_key;
+            if (appState.previewItem?.item_key === itk) {
+                await loadAnnotations(itk);
+            }
+        }
+        const notesChanged = (Array.isArray(data.notes_rewritten) && data.notes_rewritten.length)
+            || (Array.isArray(data.created_connections) && data.created_connections.length);
+        if (notesChanged && appState.previewItem?.item_key) {
+            // Reload through the same canonical loader used everywhere else notes
+            // get shown (including on a fresh page load, where this reliably
+            // works). It fetches fresh from the backend (which already persisted
+            // everything via patch_item_notes — do NOT call
+            // saveProjectNotesAndConnections here, that would push stale
+            // frontend content back over what the backend just wrote), sets
+            // notesScope correctly, and re-syncs noteConnections + ink lines
+            // itself. A hand-rolled fetch+innerHTML here previously wrote into
+            // whatever getNotesContentEl() resolved to *before* notesScope was
+            // ever set to 'item' (e.g. if the user chatted without having
+            // opened the Notes tab yet), landing nowhere the user could see it.
+            await loadItemNotesForPreview();
+        }
+        if (appState.previewKind === 'pdf' && appState.pdfDoc) {
+            scheduleAnnotationAnchorResolution();
+        }
+    } catch (err) {
+        console.warn('applyPdfChatCreatedLinksAndHighlights error:', err);
+    }
+}
+
 async function sendPdfFullscreenChatMessage() {
     const input = document.getElementById('pdf-fullscreen-chat-input');
     const message = input?.value.trim() || '';
@@ -4901,6 +4939,8 @@ async function sendPdfFullscreenChatMessage() {
     try {
         const profileSelect = document.getElementById('pdf-chat-model-select') || document.getElementById('chat-model-select');
         const selectedProfile = profileSelect ? profileSelect.value : '';
+        const openItemKey = appState.previewItem?.item_key || '';
+        const toolsEnabled = !!openItemKey;
         const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -4910,9 +4950,11 @@ async function sendPdfFullscreenChatMessage() {
                 candidates: appState.currentCandidates,
                 suggestions: appState.currentSuggestions,
                 history: appState.chatMessages.slice(-8),
-                current_item_key: appState.previewItem?.item_key || '',
+                current_item_key: openItemKey,
                 profile_override: selectedProfile,
                 restrict_to_document: appState.pdfChatScope === 'document',
+                allow_tools: toolsEnabled,
+                enable_ink_links: toolsEnabled,
             }),
         });
 
@@ -4938,6 +4980,10 @@ async function sendPdfFullscreenChatMessage() {
         appState.chatMessages.push({ role: 'assistant', content: data.reply, time: new Date(), duration: Date.now() - reqStart });
         renderPdfFullscreenChat();
         renderChatMessages();
+
+        if (data.created_annotations || data.created_connections || data.notes_rewritten) {
+            await _applyPdfChatCreatedLinksAndHighlights(data);
+        }
 
         if (!appState.chatSessionId) {
             const sessionRes = await fetch('/api/chat-sessions', {

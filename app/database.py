@@ -160,6 +160,8 @@ def _ensure_item_notes_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE items ADD COLUMN notes TEXT DEFAULT ''")
     if "note_connections" not in cols:
         conn.execute("ALTER TABLE items ADD COLUMN note_connections TEXT DEFAULT '[]'")
+    if "notes_backup" not in cols:
+        conn.execute("ALTER TABLE items ADD COLUMN notes_backup TEXT DEFAULT ''")
 
 
 def _ensure_project_tables(conn: sqlite3.Connection) -> None:
@@ -2443,7 +2445,7 @@ def get_item_v2(item_key: str) -> Optional[Dict]:
 def get_item_notes(item_key: str) -> Optional[Dict[str, str]]:
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT item_key, notes, note_connections FROM items WHERE item_key = ?",
+            "SELECT item_key, notes, note_connections, notes_backup FROM items WHERE item_key = ?",
             (item_key,),
         ).fetchone()
         if not row:
@@ -2452,6 +2454,7 @@ def get_item_notes(item_key: str) -> Optional[Dict[str, str]]:
             "item_key": row["item_key"],
             "notes": row["notes"] or "",
             "note_connections": row["note_connections"] or "[]",
+            "notes_backup": row["notes_backup"] or "",
         }
 
 
@@ -2459,6 +2462,7 @@ def patch_item_notes(item_key: str, data: Dict[str, Any]) -> bool:
     allowed = {
         "notes": lambda v: v or "",
         "note_connections": lambda v: v or "[]",
+        "notes_backup": lambda v: v or "",
     }
     updates = []
     values = []
