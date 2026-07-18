@@ -341,7 +341,7 @@ def _quote_appears_in_text(quote: str, full_text: str) -> bool:
 
 
 def _build_tool_executor(
-    item_key: str, collected: Dict[str, List], full_text: str = ""
+    item_key: str, collected: Dict[str, List], full_text: str = "", topic_estimate: int = 0
 ) -> Callable[[str, Dict[str, Any]], Dict[str, Any]]:
     """Return a tool-execution closure that mutates `collected` in place.
 
@@ -352,6 +352,12 @@ def _build_tool_executor(
 
     `full_text` is the current item's extracted document text, used to verify
     add_quote_highlight quotes are real before writing them to the DB.
+
+    `topic_estimate` is a rough count (via _estimate_topic_mentions) of how many
+    times the request's content topic appears in `full_text` — surfaced in the
+    add_quote_highlight nudge as a concrete number, since "find all you can" on
+    its own was observed not being enough to stop the model declaring one match
+    sufficient.
     """
     def _executor(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         from app.repositories.annotations import create_annotation, get_annotation
@@ -438,6 +444,11 @@ def _build_tool_executor(
                 "page_index": 0,
                 "geometry_json": "{}",
             })
+            n_so_far = len(collected["annotations"])
+            if topic_estimate > n_so_far:
+                coverage_hint = f"~{topic_estimate} mentions found, {n_so_far} highlighted — more likely remain."
+            else:
+                coverage_hint = f"{n_so_far} highlighted so far."
             return {
                 "annotation_id": annotation_id,
                 "ok": True,
@@ -445,13 +456,9 @@ def _build_tool_executor(
                 "sentiment_applied": sentiment,
                 "tags_applied": tags_applied or None,
                 "next_step": (
-                    f"Highlight created (annotation_id={annotation_id}). ONLY if the user's request actually "
-                    "asked for pointers, links, ink connections, or something added to the @note: call "
-                    f"add_note_pointer_with_ink now with annotation_id={annotation_id} before highlighting the "
-                    "next point, rather than batching all highlights first and risking running out of turns "
-                    "with nothing linked. If the user just asked for a highlight/underline/annotation/tag/"
-                    "sentiment with no mention of notes, pointers, or ink connections, this highlight is already "
-                    "complete — do NOT call add_note_pointer_with_ink for it."
+                    f"{coverage_hint} If no exact count was requested, keep calling add_quote_highlight for "
+                    "other distinct matches before your final reply. Call add_note_pointer_with_ink only if "
+                    f"notes/pointers/links were actually requested (annotation_id={annotation_id})."
                 ),
             }
 
@@ -489,7 +496,7 @@ def _build_tool_executor(
                 f'<span class="ink-anchor" data-conn-id="{conn_id}" '
                 f'style="display:inline-block;width:10px;height:10px;'
                 f'background:var(--accent,#2d6fd4);border-radius:50%;'
-                f'margin-left:6px;vertical-align:middle;" contenteditable="false">&#9679;</span>'
+                f'margin-left:6px;vertical-align:middle;" contenteditable="false"></span>'
             )
             replacement_block = f"<p>{anchor_html}</p>"
             replace_existing = bool(args.get("replace_existing", False))
@@ -674,6 +681,14 @@ _ANNOTATION_INSTRUCTION_WORDS = {
     "tagged", "tagging", "sentiment", "with", "and", "for", "any", "related", "relate",
     "relating", "about", "of", "the", "a", "an", "to", "in", "that", "which", "point",
     "points", "each", "every", "all", "some", "note", "notes", "pointer", "pointers",
+    # colour names — meta-instruction (how to style it), not the content topic
+    "red", "orange", "yellow", "green", "blue", "purple", "pink", "black", "white",
+    "gray", "grey", "brown", "violet", "indigo", "cyan", "magenta", "gold", "silver",
+    # sentiment values — meta-instruction (how to label it), not the content topic
+    "positive", "positif", "negative", "negatif", "neutral", "critical", "mixed",
+    # common typos of the above seen in practice — the sliding-window fallback in
+    # _estimate_topic_mentions also guards against any variant not caught here
+    "undeline", "underlne", "annotaton", "sentimen",
 }
 
 
@@ -696,6 +711,38 @@ def _extract_content_query(message: str) -> str:
     words = [w for w in re.findall(r"[a-zA-Z']+", cleaned.lower()) if len(w) > 2]
     content_words = [w for w in words if w not in _ANNOTATION_INSTRUCTION_WORDS]
     return " ".join(content_words)
+
+
+def _estimate_topic_mentions(topic_query: str, text: str) -> int:
+    """Rough count of how many times a topic appears in `text` — used to give the
+    model a concrete number instead of an open-ended "find all you can", since
+    that alone was observed not being enough to stop it declaring one match
+    sufficient and offering to look for more only if asked, rather than
+    continuing on its own.
+
+    Tries progressively shorter windows of topic_query's words, longest first,
+    and returns the count of the first one that appears at all — a single
+    stray leftover word (e.g. a typo _extract_content_query's stopword list
+    doesn't recognise) only poisons the windows it's part of, not shorter ones
+    that exclude it, and preferring the longest match avoids wildly
+    over-counting on a generic single word (e.g. "policy" alone appears far
+    more often than the specific topic actually being asked about).
+    Approximate by design — good enough to anchor "roughly how many", not an
+    exact figure.
+    """
+    words = topic_query.split()
+    if not words:
+        return 0
+    text_lower = text.lower()
+    for size in range(min(len(words), 4), 0, -1):
+        for i in range(len(words) - size + 1):
+            window = " ".join(words[i:i + size])
+            if len(window) < 4:
+                continue
+            count = text_lower.count(window)
+            if count > 0:
+                return count
+    return 0
 
 
 def _build_current_doc_context(item_key: str, query: str, max_chars: int = 16000) -> str:
@@ -1090,9 +1137,13 @@ def chat_route(body: ChatRequest) -> Dict:
     # the model genuinely copied from what it was shown could still fail
     # verification here just because it wasn't near the start of the doc.
     current_item_full_text = current_doc_context if tools_enabled else ""
+    topic_estimate = (
+        _estimate_topic_mentions(_extract_content_query(body.message), current_item_full_text)
+        if tools_enabled else 0
+    )
     collected: Dict[str, List] = {"annotations": [], "connections": [], "notes_html_appends": []}
     tool_executor = (
-        _build_tool_executor(body.current_item_key, collected, current_item_full_text)
+        _build_tool_executor(body.current_item_key, collected, current_item_full_text, topic_estimate)
         if tools_enabled else None
     )
     chat_tools = _CHAT_TOOLS if tools_enabled else None
@@ -1125,7 +1176,7 @@ def chat_route(body: ChatRequest) -> Dict:
             collected.clear()
             collected.update({"annotations": [], "connections": [], "notes_html_appends": []})
             fallback_executor = (
-                _build_tool_executor(body.current_item_key, collected, current_item_full_text)
+                _build_tool_executor(body.current_item_key, collected, current_item_full_text, topic_estimate)
                 if tools_enabled else None
             )
             reply, notifications = call_with_quota_fallback(

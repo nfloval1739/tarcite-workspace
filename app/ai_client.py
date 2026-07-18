@@ -513,11 +513,8 @@ _CHAT_TOOL_SYSTEM_SUFFIX = (
     "write_item_notes INSTEAD of just typing the content into the chat reply — the user wants the content saved "
     "into the @note panel, not echoed back. After tool calls, write only a brief plain-text confirmation (one "
     "or two lines) of what you created; do NOT repeat the @note content itself back to the user.\n"
-    "When the user asks you to annotate/highlight/tag content 'about X' or 'related to X' WITHOUT stating a "
-    "specific count (contrast with 'highlight 3 examples of X', which means exactly 3), find and annotate EVERY "
-    "clearly relevant, distinct passage you can within your available tool-call budget — not just the first one "
-    "you find. A request like 'annotate anything about policy change' is asking for full coverage of the "
-    "document text above, not a single representative example."
+    "Default rule: unless an exact number is stated, an annotate/highlight/underline/tag request means every "
+    "distinct matching passage, not just one — regardless of phrasing."
 )
 
 
