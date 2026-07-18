@@ -1184,6 +1184,11 @@ function onNotesInput() {
     _notesSaveTimer = setTimeout(saveProjectNotes, 1500);
 }
 
+function _isBlankNotesHtml(html) {
+    if (!html) return true;
+    return html.replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').trim().length === 0;
+}
+
 async function saveProjectNotes(extraPayload = {}) {
     const content = getNotesContentEl();
     if (!content) return;
@@ -1197,6 +1202,18 @@ async function saveProjectNotes(extraPayload = {}) {
         if (isItemNotes && content.querySelector('.doc-loading, .pdf-sidebar-empty')) return;
 
         const notes = content.innerHTML;
+        // Defense against saving over real content with a stale/never-loaded
+        // editor: if the DOM looks blank but we already know (from the last
+        // fetch) that this item has real notes, something is wrong with *this*
+        // save, not the stored data — e.g. the notes tab was never actually
+        // visited this session so its editor was never populated. Skip rather
+        // than silently destroying known-good content.
+        if (isItemNotes && _isBlankNotesHtml(notes)
+            && appState.previewItem?.item_key === itemKey
+            && !_isBlankNotesHtml(appState.previewItem?.notes || '')) {
+            console.warn('Skipped saving notes: editor is blank but known content exists for this item — not overwriting.');
+            return;
+        }
         const url = isItemNotes ? `/api/items/${itemKey}/notes` : `/api/projects/${projectId}`;
         const res = await fetch(url, {
             method: 'PATCH',
@@ -3266,14 +3283,29 @@ async function resolveUnanchoredAnnotations(token) {
 
 async function resolveAnnotationAnchor(ann) {
     const quote = ann.quote.trim().slice(0, 500);
-    const hintPage = (ann.page_index || 0) + 1;
+    const rawPageIndex = ann.page_index || 0;
+    // page_index=0 from a quote-only annotation almost always means "unknown"
+    // (chat/MCP-created annotations always default to it), not "confirmed page
+    // 1" — a real highlight actually placed on page 1 already carries real
+    // geometry and never reaches this function (see annotationNeedsAnchor).
+    // Treating 0 as a trustworthy hint let a weak fuzzy keyword-window match on
+    // page 1 win by default whenever the quote's vocabulary happened to overlap
+    // a little with that page's text (e.g. shared terminology with the
+    // abstract), even when the quote was actually from much later in the doc.
+    const hasPageHint = rawPageIndex > 0;
+    const hintPage = rawPageIndex + 1;
 
-    let geometry = await getPdfTextMatchGeometry(quote, hintPage);
-    if (geometry) return { pageIndex: hintPage - 1, geometry };
+    if (hasPageHint) {
+        const geometry = await getPdfTextMatchGeometry(quote, hintPage);
+        if (geometry) return { pageIndex: hintPage - 1, geometry };
+    }
 
-    const pageNum = await findPageForQuote(quote, hintPage);
+    // No trustworthy hint (or the hint didn't pan out) — rank every page by
+    // keyword overlap and anchor to whichever scores best, rather than
+    // accepting whatever page happened to be tried first.
+    const pageNum = await findPageForQuote(quote, hasPageHint ? hintPage : null);
     if (!pageNum) return null;
-    geometry = await getPdfTextMatchGeometry(quote, pageNum);
+    const geometry = await getPdfTextMatchGeometry(quote, pageNum);
     return geometry ? { pageIndex: pageNum - 1, geometry } : null;
 }
 
@@ -4365,7 +4397,11 @@ async function loadAnnotations(itemKey) {
         const wasEmpty = appState.annotations.length === 0;
         appState.annotations = (data.annotations || []).map(a => ({ ...a, item_key: itemKey }));
         renderAnnotations();
-        if (wasEmpty && appState.annotations.length > 0 && !appState.annotationPanelOpen) {
+        // Never auto-open while in fullscreen: the annotation panel's chat/notes
+        // tabs share element IDs with the fullscreen sidebar's own tabs (same
+        // pattern as item-notes-viewer), and opening both at once would collide.
+        // Fullscreen already has its own "annotations" sidebar tab for this.
+        if (wasEmpty && appState.annotations.length > 0 && !appState.annotationPanelOpen && !appState.pdfFullscreen) {
             appState.annotationPanelOpen = true;
             toggleAnnotationPanel();
         }
@@ -4403,7 +4439,9 @@ function renderAnnotations() {
 }
 
 function updateAnnotationCountBadges() {
-    const count = appState.annotations.length;
+    // Chat-created highlights that only anchor an ink connection are excluded
+    // from every visible count too — see renderAnnotationListInPanel().
+    const count = appState.annotations.filter(a => !a.hidden_from_list).length;
 
     const fsTab = document.querySelector('.pdf-sidebar-tab[data-tab="annotations"]');
     if (fsTab) updateSmallCountBadge(fsTab, count);
@@ -4432,6 +4470,8 @@ function renderPdfFullscreenSidebar() {
     const sidebar = document.getElementById('pdf-fullscreen-sidebar');
     if (!sidebar) return;
 
+    // See renderAnnotationListInPanel() for why hidden_from_list is excluded.
+    const visibleAnnotationCount = appState.annotations.filter(a => !a.hidden_from_list).length;
     const isPdf = appState.previewKind === 'pdf';
     // Outline tab is PDF-only; fall back to annotations if it was active
     if (!isPdf && appState.pdfFullscreenSidebarTab === 'outline') {
@@ -4441,7 +4481,7 @@ function renderPdfFullscreenSidebar() {
     sidebar.innerHTML = `
         <div class="pdf-fs-resize-handle" id="pdf-fs-resize-handle" role="separator" aria-label="Resize sidebar" title="Drag to resize"></div>
         <div class="pdf-sidebar-tabs" role="tablist" aria-label="Fullscreen panels">
-            ${renderPdfSidebarTab('annotations', 'Annotations', appState.annotations.length)}
+            ${renderPdfSidebarTab('annotations', 'Annotations', visibleAnnotationCount)}
             ${renderPdfSidebarTab('library', 'Library', (appState.pdfLibrarySearch ? appState.pdfLibrarySearchItems : appState.pdfLibraryRelatedItems).length)}
             ${isPdf ? renderPdfSidebarTab('outline', 'Outline', appState.pdfOutlineItems.length) : ''}
             ${renderPdfSidebarTab('notes', 'Notes', appState.noteConnections?.length || 0)}
@@ -4450,7 +4490,7 @@ function renderPdfFullscreenSidebar() {
         <div class="pdf-sidebar-tab-panel ${appState.pdfFullscreenSidebarTab === 'annotations' ? 'active' : ''}" data-panel="annotations">
             <div class="pdf-sidebar-title">
                 <span>Annotations</span>
-                <span class="pdf-sidebar-count">${appState.annotations.length}</span>
+                <span class="pdf-sidebar-count">${visibleAnnotationCount}</span>
             </div>
             <div id="pdf-fullscreen-annotation-list" class="pdf-fullscreen-annotation-list"></div>
         </div>
@@ -4527,7 +4567,16 @@ function renderPdfSidebarTab(tab, label, count) {
 function setPdfChatScope(scope) {
     if (scope !== 'document' && scope !== 'library') return;
     appState.pdfChatScope = scope;
-    renderPdfFullscreenSidebar();
+    // The chat tab-panel markup is shared (same element IDs) between the PDF
+    // fullscreen sidebar and the normal-view annotation panel — re-render
+    // whichever one is actually showing it, not always the fullscreen sidebar,
+    // which would silently update a hidden element while the visible toggle
+    // button never changes state.
+    if (appState.pdfFullscreen) {
+        renderPdfFullscreenSidebar();
+    } else if (appState.annotationPanelOpen) {
+        renderAnnotationPanel();
+    }
 }
 
 function setPdfFullscreenSidebarTab(tab) {
@@ -4802,15 +4851,19 @@ function _renderPdfLibraryRelatedItem(item) {
 function renderPdfFullscreenAnnotations() {
     const list = document.getElementById('pdf-fullscreen-annotation-list');
     if (!list) return;
+    // See renderAnnotationListInPanel() — chat-created highlights that only
+    // anchor an ink connection are hidden from this list (and its count), while
+    // still rendering on the PDF and staying valid ink-line targets.
+    const visible = appState.annotations.filter(a => !a.hidden_from_list);
     const count = document.querySelector('[data-panel="annotations"] .pdf-sidebar-count');
-    if (count) count.textContent = String(appState.annotations.length);
+    if (count) count.textContent = String(visible.length);
 
-    if (appState.annotations.length === 0) {
+    if (visible.length === 0) {
         list.innerHTML = '<div class="annotation-empty">No annotations yet</div>';
         return;
     }
 
-    const sortedAnnotations = [...appState.annotations].sort((a, b) => {
+    const sortedAnnotations = [...visible].sort((a, b) => {
         const pageDiff = (a.page_index || 0) - (b.page_index || 0);
         return pageDiff || (a.annotation_id || 0) - (b.annotation_id || 0);
     });
@@ -5241,12 +5294,14 @@ function renderAnnotationList() {
     const list = document.getElementById('annotation-list');
     if (!list) return;
 
-    if (appState.annotations.length === 0) {
+    // See renderAnnotationListInPanel() for why hidden_from_list is filtered.
+    const visible = appState.annotations.filter(a => !a.hidden_from_list);
+    if (visible.length === 0) {
         list.innerHTML = '<div class="annotation-empty">No annotations yet</div>';
         return;
     }
 
-    list.innerHTML = appState.annotations.map(a => renderAnnotationListItem(a)).join('');
+    list.innerHTML = visible.map(a => renderAnnotationListItem(a)).join('');
     refreshIcons(list);
 }
 
@@ -5327,12 +5382,17 @@ function renderAnnotationListInPanel() {
     const panelBody = document.querySelector('.annotation-panel-body .annotation-list');
     if (!panelBody) return;
 
-    if (appState.annotations.length === 0) {
+    // Chat-created highlights that exist only to anchor an ink connection are
+    // marked hidden_from_list server-side (app/routers/chat.py) — they still
+    // render on the PDF and the ink line still points to them, they just don't
+    // clutter this list, since the user asked for an ink connection, not a highlight.
+    const visible = appState.annotations.filter(a => !a.hidden_from_list);
+    if (visible.length === 0) {
         panelBody.innerHTML = '<div class="annotation-empty">No annotations yet</div>';
         return;
     }
 
-    panelBody.innerHTML = appState.annotations.map(a => renderAnnotationListItem(a)).join('');
+    panelBody.innerHTML = visible.map(a => renderAnnotationListItem(a)).join('');
     refreshIcons(panelBody);
 }
 
@@ -5541,23 +5601,30 @@ function toggleAnnotationPanel() {
 function renderAnnotationPanel() {
     const panel = document.getElementById('annotation-panel');
     if (!panel) return;
-    if (!['annotations', 'notes'].includes(appState.annotationPanelTab)) {
+    if (!['annotations', 'notes', 'chat'].includes(appState.annotationPanelTab)) {
         appState.annotationPanelTab = 'annotations';
     }
 
+    const titles = { notes: 'Notes', chat: 'Chat' };
+    // See renderAnnotationListInPanel() for why hidden_from_list is excluded.
+    const visibleAnnotationCount = appState.annotations.filter(a => !a.hidden_from_list).length;
     panel.innerHTML = `
         <div class="annotation-panel-header">
-            <h4>${appState.annotationPanelTab === 'notes' ? 'Notes' : 'Annotations'}</h4>
+            <h4>${titles[appState.annotationPanelTab] || 'Annotations'}</h4>
             <button class="annotation-panel-close" onclick="closeAnnotationPanel()" aria-label="Close annotation panel">${icon('x')}</button>
         </div>
         <div class="annotation-panel-tabs" role="tablist" aria-label="Document side panel">
             <button class="annotation-panel-tab ${appState.annotationPanelTab === 'annotations' ? 'active' : ''}" role="tab" aria-selected="${appState.annotationPanelTab === 'annotations'}" onclick="setAnnotationPanelTab('annotations')">
                 ${icon('bookmark')} <span>Annotations</span>
-                ${appState.annotations.length ? `<small>${appState.annotations.length}</small>` : ''}
+                ${visibleAnnotationCount ? `<small>${visibleAnnotationCount}</small>` : ''}
             </button>
             <button class="annotation-panel-tab ${appState.annotationPanelTab === 'notes' ? 'active' : ''}" role="tab" aria-selected="${appState.annotationPanelTab === 'notes'}" onclick="setAnnotationPanelTab('notes')">
                 ${icon('notebook-tabs')} <span>Notes</span>
                 ${appState.noteConnections?.length ? `<small>${appState.noteConnections.length}</small>` : ''}
+            </button>
+            <button class="annotation-panel-tab ${appState.annotationPanelTab === 'chat' ? 'active' : ''}" role="tab" aria-selected="${appState.annotationPanelTab === 'chat'}" onclick="setAnnotationPanelTab('chat')">
+                ${icon('message-circle')} <span>Chat</span>
+                ${appState.chatMessages.length ? `<small>${appState.chatMessages.length}</small>` : ''}
             </button>
         </div>
         <div class="annotation-panel-body">
@@ -5569,18 +5636,46 @@ function renderAnnotationPanel() {
                     ${renderItemNotesEditor()}
                 </div>
             </div>
+            <div class="annotation-panel-tab-panel ${appState.annotationPanelTab === 'chat' ? 'active' : ''}" data-panel="chat">
+                <div class="pdf-chat-scope-bar">
+                    <button class="pdf-chat-scope-btn ${appState.pdfChatScope === 'document' ? 'active' : ''}"
+                            onclick="setPdfChatScope('document')" title="Ask about this document only">This doc</button>
+                    <button class="pdf-chat-scope-btn ${appState.pdfChatScope === 'library' ? 'active' : ''}"
+                            onclick="setPdfChatScope('library')" title="Ask across your whole library">Library</button>
+                </div>
+                <div id="pdf-fs-chat-sessions" class="sessions-list hidden"></div>
+                <div id="pdf-fullscreen-chat-messages" class="pdf-fullscreen-chat-messages"></div>
+                <div class="chat-input-area pdf-chat-input-area">
+                    <textarea id="pdf-fullscreen-chat-input" rows="2"
+                        placeholder="${appState.pdfChatScope === 'document' ? 'Ask about this document...' : 'Ask across your library...'}"
+                        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendPdfFullscreenChatMessage();}"></textarea>
+                    <div class="chat-input-row">
+                        <select id="pdf-chat-model-select" class="chat-model-select pdf-chat-model-select" aria-label="AI profile"></select>
+                        <button class="btn-secondary chat-action-button" onclick="startPdfNewChat()" title="New chat" aria-label="New chat">${icon('plus')}</button>
+                        <button id="pdf-chat-history-toggle" class="btn-secondary chat-history-toggle" onclick="togglePdfChatHistoryPanel()" title="History" aria-label="Chat history" aria-expanded="false">${icon('history')}</button>
+                        <button class="btn-primary chat-send-icon-btn" onclick="sendPdfFullscreenChatMessage()" title="Send" aria-label="Send">${icon('send')}</button>
+                    </div>
+                </div>
+            </div>
         </div>
     `;
     refreshIcons(panel);
+    // These two mirror renderPdfFullscreenSidebar(): the chat tab-panel exists in
+    // the DOM (just hidden via CSS when another tab is active) and needs its
+    // message history and model dropdown ready before the user switches to it,
+    // same as that sidebar keeps its own chat tab-panel populated regardless of
+    // which of its tabs is currently active.
+    renderPdfFullscreenChat();
+    renderPdfChatProfileSelect();
     if (appState.annotationPanelTab === 'notes') {
         loadItemNotesForPreview();
-    } else {
+    } else if (appState.annotationPanelTab === 'annotations') {
         renderAnnotationListInPanel();
     }
 }
 
 function setAnnotationPanelTab(tab) {
-    if (!['annotations', 'notes'].includes(tab)) tab = 'annotations';
+    if (!['annotations', 'notes', 'chat'].includes(tab)) tab = 'annotations';
     if (appState.annotationPanelTab === 'notes' && tab !== 'notes' && appState.notesScope === 'item') {
         clearTimeout(_notesSaveTimer);
         saveProjectNotes();
@@ -5592,6 +5687,8 @@ function setAnnotationPanelTab(tab) {
     renderAnnotationPanel();
     if (tab === 'notes') {
         document.getElementById('item-notes-content')?.focus();
+    } else if (tab === 'chat') {
+        document.getElementById('pdf-fullscreen-chat-input')?.focus();
     }
 }
 

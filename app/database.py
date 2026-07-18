@@ -95,10 +95,17 @@ def _ensure_tag_parent_column(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_annotation_sentiment_column(conn: sqlite3.Connection) -> None:
-    """Add sentiment to annotations table if it doesn't exist yet (non-destructive migration)."""
+    """Add sentiment/hidden_from_list to annotations table if missing (non-destructive migration)."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(annotations)").fetchall()}
     if "sentiment" not in cols:
         conn.execute("ALTER TABLE annotations ADD COLUMN sentiment TEXT DEFAULT NULL")
+    if "hidden_from_list" not in cols:
+        # Set on a chat-created highlight once it's actually used as an ink-connection
+        # target — it still exists, still renders on the PDF, and the ink line still
+        # points to it; it's just filtered out of the Annotations tab list, since the
+        # user didn't ask for a highlight, they asked for an ink connection, and the
+        # highlight only exists as that connection's necessary anchor point.
+        conn.execute("ALTER TABLE annotations ADD COLUMN hidden_from_list INTEGER DEFAULT 0")
 
 
 def _ensure_tag_type_column(conn: sqlite3.Connection) -> None:

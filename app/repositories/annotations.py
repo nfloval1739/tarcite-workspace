@@ -240,6 +240,21 @@ def import_item_annotations(item_key: str) -> Dict[str, Any]:
     return {"imported": imported, "skipped": skipped, "total_in_pdf": total, "error": None}
 
 
+def mark_annotation_hidden_from_list(annotation_id: int) -> None:
+    """Flag an annotation as hidden from the Annotations tab list.
+
+    Used when a chat-created highlight becomes the target of an ink connection:
+    the highlight itself, and the ink line pointing to it, still need to exist
+    and render — only its row in the Annotations list is suppressed, since the
+    user asked for an ink connection, not a highlight.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE annotations SET hidden_from_list = 1 WHERE annotation_id = ?",
+            (annotation_id,),
+        )
+
+
 def update_annotation(annotation_id: int, data: Dict[str, Any]) -> None:
     with get_connection() as conn:
         conn.execute(

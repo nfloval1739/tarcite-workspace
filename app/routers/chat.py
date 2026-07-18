@@ -49,6 +49,31 @@ _CHAT_TOOLS: List[Dict[str, Any]] = [
                         "enum": ["highlight", "underline"],
                         "description": "Visual style. Use 'highlight' by default.",
                     },
+                    "color": {
+                        "type": "string",
+                        "description": (
+                            "Hex colour for the highlight/underline, e.g. '#dda0dd' for purple, "
+                            "'#ffff00' for yellow. Omit to use the app's default yellow. Only set this "
+                            "when the user asks for a specific colour."
+                        ),
+                    },
+                    "sentiment": {
+                        "type": "string",
+                        "description": (
+                            "Optional free-text sentiment label for this passage, e.g. 'positive', "
+                            "'negative', 'critical', 'mixed'. Only set when the user asks for a sentiment "
+                            "to be recorded."
+                        ),
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional list of tag/code names to attach, e.g. ['changed'] for a '#changed' "
+                            "request. Tag names are created automatically if they don't already exist. "
+                            "Only set when the user asks for a tag or '#code'."
+                        ),
+                    },
                 },
                 "required": ["quote"],
             },
@@ -236,7 +261,20 @@ def _line_segments(html_content: str, start: int, end: int):
 
 
 def _plain_norm(html_fragment: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html_fragment)).strip()
+    """Strip tags and decode HTML entities for text-equality comparison.
+
+    Without entity decoding, a stray "&nbsp;" (a common contentEditable
+    artifact, or something a model occasionally emits as a literal formatting
+    marker) in the stored note never compares equal to a model's own
+    "&amp;"-escaped pointer_text for the same visible text — causing
+    replace_existing matches to spuriously fail and silently fall back to
+    duplicating the point via append instead of linking it in place.
+    """
+    import html as _html_mod
+
+    text = re.sub(r"<[^>]+>", "", html_fragment)
+    text = _html_mod.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _replace_text_block_in_notes_html(html_content: str, target_text: str, anchor_html: str) -> str | None:
@@ -277,6 +315,14 @@ _QUOTE_NORMALIZE_MAP = str.maketrans({
 
 
 def _normalize_for_match(text: str) -> str:
+    # PDF line-wrap hyphenation: a word split across a line break shows up as a
+    # soft hyphen (U+00AD) — or sometimes a literal '-' — immediately before the
+    # line break, e.g. "grad\xad\nually". A model correctly copying this as
+    # flowing prose writes "gradually", which can never match unless the
+    # hyphen+break is rejoined first; done before the general whitespace
+    # collapse below so the newline-adjacency signal is still intact to match on.
+    text = re.sub(r"\xad\s*", "", text)
+    text = re.sub(r"-\n\s*", "", text)
     return re.sub(r"\s+", " ", text.translate(_QUOTE_NORMALIZE_MAP)).strip().lower()
 
 
@@ -348,18 +394,41 @@ def _build_tool_executor(
             if ann_type not in {"highlight", "underline"}:
                 ann_type = "highlight"
             comment = (args.get("comment") or "").strip()
+            color = (args.get("color") or "").strip()
+            if color and not re.fullmatch(r"#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}", color):
+                color = ""  # invalid hex — fall back to the app's default rather than erroring out
+            sentiment = (args.get("sentiment") or "").strip() or None
             data = {
                 "item_key": item_key,
                 "file_id": None,
                 "page_index": 0,
                 "annotation_type": ann_type,
-                "color": "",
+                "color": color,
                 "quote": quote,
                 "comment": comment,
                 "geometry_json": "{}",
                 "source_chunk_id": "",
+                "sentiment": sentiment,
             }
             annotation_id = create_annotation(data)
+
+            tags_applied: List[str] = []
+            raw_tags = args.get("tags")
+            if isinstance(raw_tags, list) and raw_tags:
+                from app.repositories.annotations import create_tag, set_annotation_tags
+
+                tag_ids = []
+                for tag_name in raw_tags:
+                    tag_name = (tag_name or "").strip().lstrip("#")
+                    if not tag_name:
+                        continue
+                    tag_id = create_tag(tag_name)
+                    if tag_id:
+                        tag_ids.append(tag_id)
+                        tags_applied.append(tag_name)
+                if tag_ids:
+                    set_annotation_tags(annotation_id, tag_ids)
+
             collected["annotations"].append({
                 "annotation_id": annotation_id,
                 "item_key": item_key,
@@ -369,7 +438,22 @@ def _build_tool_executor(
                 "page_index": 0,
                 "geometry_json": "{}",
             })
-            return {"annotation_id": annotation_id, "ok": True}
+            return {
+                "annotation_id": annotation_id,
+                "ok": True,
+                "color_applied": color or None,
+                "sentiment_applied": sentiment,
+                "tags_applied": tags_applied or None,
+                "next_step": (
+                    f"Highlight created (annotation_id={annotation_id}). ONLY if the user's request actually "
+                    "asked for pointers, links, ink connections, or something added to the @note: call "
+                    f"add_note_pointer_with_ink now with annotation_id={annotation_id} before highlighting the "
+                    "next point, rather than batching all highlights first and risking running out of turns "
+                    "with nothing linked. If the user just asked for a highlight/underline/annotation/tag/"
+                    "sentiment with no mention of notes, pointers, or ink connections, this highlight is already "
+                    "complete — do NOT call add_note_pointer_with_ink for it."
+                ),
+            }
 
         if name == "add_note_pointer_with_ink":
             pointer_text = (args.get("pointer_text") or "").strip()
@@ -401,11 +485,11 @@ def _build_tool_executor(
                 .replace('"', "&quot;")
             )
             anchor_html = (
+                f'{safe_text}'
                 f'<span class="ink-anchor" data-conn-id="{conn_id}" '
                 f'style="display:inline-block;width:10px;height:10px;'
                 f'background:var(--accent,#2d6fd4);border-radius:50%;'
-                f'margin-right:6px;vertical-align:middle;" contenteditable="false">&#9679;</span>'
-                f'{safe_text}'
+                f'margin-left:6px;vertical-align:middle;" contenteditable="false">&#9679;</span>'
             )
             replacement_block = f"<p>{anchor_html}</p>"
             replace_existing = bool(args.get("replace_existing", False))
@@ -438,6 +522,12 @@ def _build_tool_executor(
                 "notes": new_notes,
                 "note_connections": json.dumps(connections),
             })
+            # The highlight only exists to give this connection somewhere to point
+            # at — the user asked for an ink connection, not a highlight, so it
+            # shouldn't clutter the Annotations tab. It still renders on the PDF
+            # and the ink line still points to it; only its list row is hidden.
+            from app.repositories.annotations import mark_annotation_hidden_from_list
+            mark_annotation_hidden_from_list(annotation_id)
             collected["connections"].append(conn)
             result = {
                 "connection_id": conn_id,
@@ -472,6 +562,7 @@ def _build_tool_executor(
             existing_notes = current.get("notes", "") or ""
             patch_data: Dict[str, Any] = {}
             backed_up = False
+            connections_cleared = False
             if mode == "replace":
                 new_notes = html
                 if existing_notes.strip():
@@ -480,6 +571,18 @@ def _build_tool_executor(
                     # snapshot recoverable via GET /api/items/{key}/notes (notes_backup).
                     patch_data["notes_backup"] = existing_notes
                     backed_up = True
+                # Replacing the whole @note panel destroys any ink-anchor spans it
+                # contained, but leaves note_connections untouched otherwise — a
+                # model re-writing/"finalizing" a summary after already linking
+                # points would silently orphan every connection: they'd still
+                # exist in note_connections (pointing at annotations that are
+                # real), but the ink-anchor <span> they need to draw a line from
+                # would be gone, so nothing renders and nothing tells the user why.
+                # Clear them here so the two stay consistent instead of desyncing.
+                existing_connections = (current.get("note_connections") or "[]").strip()
+                if existing_connections not in ("[]", ""):
+                    patch_data["note_connections"] = "[]"
+                    connections_cleared = True
             else:
                 new_notes = (existing_notes.rstrip() + "\n" + html)
             patch_data["notes"] = new_notes
@@ -496,7 +599,17 @@ def _build_tool_executor(
                 collected["notes_html_appends"].append("__REPLACE__" + html)
             else:
                 collected["notes_html_appends"].append(html)
-            return {"ok": True, "mode": mode, "chars_written": len(new_notes), "previous_notes_backed_up": backed_up}
+            result = {"ok": True, "mode": mode, "chars_written": len(new_notes), "previous_notes_backed_up": backed_up}
+            if connections_cleared:
+                result["ink_connections_cleared"] = True
+                result["note"] = (
+                    "replacing the @note content removed all existing ink-connection anchors, so "
+                    "their connections were cleared too (they would have pointed at nothing). If "
+                    "the user still wants points linked to the PDF, call add_quote_highlight + "
+                    "add_note_pointer_with_ink again for each one — do not claim existing ink "
+                    "connections are still in place."
+                )
+            return result
 
         return {"error": f"unknown tool: {name}"}
 
@@ -553,66 +666,148 @@ def _locate_in_fulltext(content: str, query: str) -> str | None:
     return None
 
 
-def _fetch_relevant_chunks(item_key: str, query: str) -> str:
-    """Retrieve relevant passages from a document using FTS + neighbor expansion.
+_ANNOTATION_INSTRUCTION_WORDS = {
+    "please", "create", "creates", "creating", "add", "adds", "adding", "make", "makes",
+    "making", "on", "this", "pdf", "document", "paper", "file", "annotation", "annotations",
+    "annotate", "annotates", "highlight", "highlights", "highlighting", "underline",
+    "underlines", "underlining", "color", "colour", "colored", "coloured", "tag", "tags",
+    "tagged", "tagging", "sentiment", "with", "and", "for", "any", "related", "relate",
+    "relating", "about", "of", "the", "a", "an", "to", "in", "that", "which", "point",
+    "points", "each", "every", "all", "some", "note", "notes", "pointer", "pointers",
+}
 
-    Priority for quoted-sentence questions:
-      1. Locate the exact passage in raw fulltext via flexible anchor matching
-      2. Fall back to FTS chunk search (may miss split-chunk sentences)
-      3. Fall back to raw fulltext beginning if document has no indexed chunks
+
+def _extract_content_query(message: str) -> str:
+    """Strip annotation-instruction scaffolding, leaving (approximately) just the
+    content topic being searched for.
+
+    Confirmed empirically: embedding the full raw instruction ("please create
+    annotation underline purple ... for any related feedback loop, add tag
+    #loop #ecology, sentiment positif") against this library's real chunk index
+    retrieved bibliography/reference entries — zero of the top 16 matches
+    contained the target phrase. Querying just "feedback loop" (this
+    function's output for that same message) retrieved the right passages.
+    Meta-instruction words (annotate, underline, colour, tag, sentiment...) and
+    tag tokens dilute the embedding away from the actual topic; a real research
+    paper's own vocabulary rarely overlaps much with "please add a purple tag".
     """
-    from app.database import (
-        get_fulltext_for_item,
-        get_item,
-        get_neighbor_chunks,
-        search_chunks_for_item,
-    )
+    cleaned = re.sub(r"#\w+", " ", message)
+    cleaned = re.sub(r"#[0-9a-fA-F]{3,6}\b", " ", cleaned)
+    words = [w for w in re.findall(r"[a-zA-Z']+", cleaned.lower()) if len(w) > 2]
+    content_words = [w for w in words if w not in _ANNOTATION_INSTRUCTION_WORDS]
+    return " ".join(content_words)
+
+
+def _build_current_doc_context(item_key: str, query: str, max_chars: int = 16000) -> str:
+    """Build document context for the currently open item.
+
+    Plain truncation of the extracted text (the old approach) means the model
+    only ever sees the first ~8-10K characters of a document — for this
+    library, the median extracted document is ~62K characters and 90% exceed
+    that window, so in practice that meant "abstract + introduction" for
+    almost every paper, no matter what the user asked about. This instead
+    draws on the same per-document chunk embeddings already built for citation
+    suggestion (ChromaDB, filtered to this item_key — the SQLite `chunks` table
+    that a first version of this used turned out to be schema-only, never
+    actually populated by the sync pipeline, so relying on it silently always
+    fell back to the same truncation this is meant to fix), combining two
+    sources deduplicated and capped at max_chars:
+      1. Chunks semantically matched against `query` (the user's message plus,
+         when present, the existing @note content — the latter is what
+         actually reveals which specific points still need a supporting quote
+         when the user asks to link "each point").
+      2. A stratified sample across ALL of the document's chunks by position,
+         so structural sections (methods/results/discussion/conclusion) are
+         represented even when nothing in `query` happens to match them —
+         this is what makes "summarise the whole document" actually cover the
+         whole document instead of just the start.
+    Falls back to a plain fulltext prefix if the item has no embedded chunks.
+    """
+    from app.database import get_fulltext_for_item, get_item
+    from app.embeddings import get_chroma_client, get_or_create_collection, query_collection
 
     item = get_item(item_key)
     if not item:
         return ""
 
-    preamble = ""
-    if item.get("abstract"):
-        preamble = f"[ABSTRACT]\n{item['abstract'][:800]}\n\n"
+    preamble = f"[ABSTRACT]\n{item['abstract'][:1200]}\n\n" if item.get("abstract") else ""
+    budget = max(0, max_chars - len(preamble))
 
-    has_quoted = bool(_QUOTE_RE.search(query))
-
-    # For quoted passages: scan raw fulltext first — most precise, handles
-    # split-chunk sentences and common PDF extraction artifacts (commas, line breaks)
-    if has_quoted:
+    # If the query itself contains a quoted passage (e.g. the user pasted a
+    # sentence and asked about it), try to locate it precisely in the raw
+    # fulltext first — handles PDF line-break/comma artifacts that chunk
+    # search below can miss, and is the most direct answer when it hits.
+    if query and _QUOTE_RE.search(query):
         for fulltext in get_fulltext_for_item(item_key):
             content = fulltext.get("content", "")
             if content:
                 excerpt = _locate_in_fulltext(content, query)
                 if excerpt is not None:
-                    return (preamble + excerpt)[:10000]
+                    return (preamble + excerpt)[:max_chars]
 
-    # General question (or quoted passage not found in fulltext): use FTS chunks
-    matched = search_chunks_for_item(item_key, query, limit=10)
+    try:
+        collection = get_or_create_collection(get_chroma_client())
+        raw = collection.get(where={"item_key": item_key}, include=["documents", "metadatas"])
+        all_chunks = sorted(
+            (
+                {"chunk_id": cid, "chunk_text": doc, "chunk_index": (meta or {}).get("chunk_index", 0)}
+                for cid, doc, meta in zip(raw.get("ids", []), raw.get("documents", []), raw.get("metadatas", []))
+                if doc
+            ),
+            key=lambda c: c["chunk_index"],
+        )
+    except Exception as exc:
+        logger.warning("ChromaDB lookup failed for item %s: %s", item_key, exc)
+        all_chunks = []
 
-    if not matched:
-        # No indexed chunks — return fulltext beginning
-        for fulltext in get_fulltext_for_item(item_key):
-            content = fulltext.get("content", "")
-            if content:
-                return (preamble + f"[FULLTEXT]\n{content}")[:10000]
-        return preamble.strip()
+    if not all_chunks:
+        full = _fetch_full_text(item_key)
+        return full[:max_chars] if full else preamble.strip()
 
-    matched_ids = [c["chunk_id"] for c in matched]
-    expanded = get_neighbor_chunks(item_key, matched_ids, window=2 if has_quoted else 1)
+    seen_ids: set = set()
+    parts: List[str] = []
+    used = 0
 
-    seen: set = set()
-    passages: list = []
-    for chunk in expanded:
-        cid = chunk["chunk_id"]
-        if cid in seen:
-            continue
-        seen.add(cid)
-        passages.append(chunk["chunk_text"])
+    if query and query.strip():
+        # Content-focused query first — see _extract_content_query's docstring:
+        # the raw instruction text alone was confirmed to retrieve zero relevant
+        # chunks for a request that clearly had matching content in the
+        # document, purely because "annotate/underline/purple/tag/sentiment"
+        # dilutes the embedding away from the actual topic. Try the stripped
+        # version first (more on-topic), then the raw query as a hedge in case
+        # stripping removed something that mattered — merged and deduplicated.
+        content_query = _extract_content_query(query)
+        search_queries = [q for q in (content_query, query[:2000]) if q and q.strip()]
+        query_budget = budget * 0.6  # leave room for the structural sample below
+        for search_query in search_queries:
+            if used >= query_budget:
+                break
+            try:
+                matched = query_collection(collection, search_query[:2000], n_results=8, item_key=item_key)
+                for cid, doc in zip(matched.get("ids", [[]])[0], matched.get("documents", [[]])[0]):
+                    if not doc or cid in seen_ids or used >= query_budget:
+                        continue
+                    seen_ids.add(cid)
+                    parts.append(doc)
+                    used += len(doc)
+            except Exception as exc:
+                logger.warning("ChromaDB query failed for item %s: %s", item_key, exc)
 
-    body = "\n\n".join(passages)
-    return (preamble + f"[RELEVANT PASSAGES]\n{body}")[:10000]
+    remaining = budget - used
+    if remaining > 0:
+        avg_len = sum(len(c["chunk_text"]) for c in all_chunks) / len(all_chunks)
+        n_slots = max(1, int(remaining / max(avg_len, 1)))
+        step = max(1, len(all_chunks) // n_slots)
+        for i in range(0, len(all_chunks), step):
+            c = all_chunks[i]
+            if c["chunk_id"] in seen_ids or used >= budget:
+                continue
+            seen_ids.add(c["chunk_id"])
+            parts.append(c["chunk_text"])
+            used += len(c["chunk_text"])
+
+    body_text = "\n\n[...]\n\n".join(parts)
+    return (preamble + f"[DOCUMENT EXCERPTS — spans the full document]\n{body_text}")[:max_chars]
 
 
 def _enrich_candidate_from_db(item) -> Dict:
@@ -684,42 +879,40 @@ def chat_route(body: ChatRequest) -> Dict:
                 f"NOTE:A suggested source with item key '{key}' was not found in the local library."
             )
 
+    current_doc_context = ""
+    existing_notes_for_query = ""
     if body.current_item_key:
         current_key = body.current_item_key
-        use_chunks = bool(body.restrict_to_document)
+        # Query on the user's message plus any existing @note content — the
+        # latter is what actually reveals which specific points still need a
+        # supporting quote when asked to link "each point" to the PDF. Always
+        # uses retrieval (not restrict_to_document, which controls whether
+        # *other* library items get searched) — the open document is always
+        # worth reading properly regardless of that toggle.
+        try:
+            from app.database import get_item_notes as _get_notes_for_query
+            _notes = _get_notes_for_query(current_key)
+            if _notes and _notes.get("notes"):
+                existing_notes_for_query = _notes["notes"]
+        except Exception:
+            pass
+        doc_query = f"{body.message}\n{existing_notes_for_query}".strip()
+        current_doc_context = _build_current_doc_context(current_key, doc_query)
+
         if current_key in existing_keys:
             for i, candidate in enumerate(enriched_candidates):
                 if candidate.get("item_key") == current_key:
-                    if not candidate.get("full_text_loaded"):
-                        context = (
-                            _fetch_relevant_chunks(current_key, body.message)
-                            if use_chunks
-                            else _fetch_full_text(current_key)
-                        )
-                        if context:
-                            enriched_candidates[i]["best_evidence"] = context
-                            enriched_candidates[i]["full_text_loaded"] = True
+                    if current_doc_context:
+                        enriched_candidates[i]["best_evidence"] = current_doc_context
+                        enriched_candidates[i]["full_text_loaded"] = True
                     enriched_candidates[i]["is_current_doc"] = True
         else:
             current_item = get_item(current_key)
             if current_item:
-                if use_chunks:
-                    creators = parse_creators(current_item.get("creators", "[]"))
-                    context = _fetch_relevant_chunks(current_key, body.message)
-                    candidate = {
-                        "item_key": current_key,
-                        "title": current_item.get("title", ""),
-                        "year": current_item.get("year", ""),
-                        "creators_formatted": format_author_inline(creators),
-                        "inline_citation": format_inline_citation(current_item),
-                        "full_reference": format_full_reference(current_item),
-                        "best_evidence": context,
-                        "source_type": "fulltext",
-                        "similarity": 0.0,
-                        "full_text_loaded": True,
-                    }
-                else:
-                    candidate = _enrich_candidate_from_db(current_item)
+                candidate = _enrich_candidate_from_db(current_item)
+                if current_doc_context:
+                    candidate["best_evidence"] = current_doc_context
+                    candidate["full_text_loaded"] = True
                 candidate["is_current_doc"] = True
                 enriched_candidates.insert(0, candidate)
                 existing_keys.add(current_key)
@@ -890,7 +1083,13 @@ def chat_route(body: ChatRequest) -> Dict:
         and body.enable_ink_links
         and bool(body.current_item_key)
     )
-    current_item_full_text = _fetch_full_text(body.current_item_key) if tools_enabled else ""
+    # Reuse the SAME text built for the prompt's "OPEN PDF DOCUMENT" section
+    # (current_doc_context), not a separate _fetch_full_text() call — those
+    # used to diverge (one could be retrieval-based excerpts from anywhere in
+    # the document, the other always the first ~10K characters), so a quote
+    # the model genuinely copied from what it was shown could still fail
+    # verification here just because it wasn't near the start of the doc.
+    current_item_full_text = current_doc_context if tools_enabled else ""
     collected: Dict[str, List] = {"annotations": [], "connections": [], "notes_html_appends": []}
     tool_executor = (
         _build_tool_executor(body.current_item_key, collected, current_item_full_text)
@@ -898,12 +1097,9 @@ def chat_route(body: ChatRequest) -> Dict:
     )
     chat_tools = _CHAT_TOOLS if tools_enabled else None
 
-    existing_notes_str = ""
-    if tools_enabled and body.current_item_key:
-        from app.database import get_item_notes
-        notes_data = get_item_notes(body.current_item_key)
-        if notes_data and notes_data.get("notes"):
-            existing_notes_str = notes_data["notes"]
+    # Already fetched above (as part of building the doc-context query) —
+    # reuse it rather than hitting the DB again for the same row.
+    existing_notes_str = existing_notes_for_query if tools_enabled else ""
 
     try:
         reply = chat_about_citations(

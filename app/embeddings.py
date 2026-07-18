@@ -467,6 +467,7 @@ def query_collection(
     n_results: int = 40,
     collection_key: Optional[str] = None,
     source_dir: Optional[str] = None,
+    item_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     if collection.count() == 0:
         return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
@@ -477,7 +478,9 @@ def query_collection(
     query_embedding = _embed_with_model(query_text, model_name=index_model, is_query=True)
 
     chroma_where = None
-    if source_dir:
+    if item_key:
+        chroma_where = {"item_key": item_key}
+    elif source_dir:
         chroma_where = {"source_dir": source_dir}
 
     raw = collection.query(
