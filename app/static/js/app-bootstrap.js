@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initSidebarTabs();
     initResizableSidebar();
     initPreviewControls();
+    initPreviewKeyboardShortcuts();
     initResizablePreview();
     initAnnotationTools();
     initAnnotationListResize();

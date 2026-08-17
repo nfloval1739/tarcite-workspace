@@ -1179,6 +1179,31 @@ html:not([data-theme="light"]) .annotation-layer .highlight {
     background: transparent;
 }
 
+/* ── Selection guard (ported from pdf.js TextLayerBuilder) ─────────────────
+   The text layer is a sparse grid of absolutely positioned spans, so dragging
+   over the gaps between them leaves the browser with no glyph to anchor on and
+   it extends the selection to the end of the layer — the "it suddenly selects
+   everything" behaviour.  pdf.js solves this with a sentinel block that parks
+   below the content while idle and is re-parented next to the span currently
+   being modified during a drag, capping how far a jump can run.  Wired up in
+   attachTextLayerSelectionGuard() / initPdfSelectionGuard(). */
+.pdf-page .text-layer .endOfContent {
+    display: block;
+    position: absolute;
+    inset: 100% 0 0;
+    /* Behind the glyph spans (but still inside the text layer's stacking
+       context, so above the canvas): it must catch the gaps only, never steal a
+       click from real text. */
+    z-index: -1;
+    cursor: default;
+    user-select: none;
+    white-space: normal;
+}
+
+.pdf-page .text-layer.selecting .endOfContent {
+    top: 0;
+}
+
 .pdf-page .text-layer .highlight {
     --highlight-bg-color: rgba(251, 191, 36, 0.35);
     --highlight-selected-bg-color: rgba(45, 111, 212, 0.4);
@@ -1377,10 +1402,21 @@ html:not([data-theme="light"]) .annotation-layer .highlight {
     z-index: 1;
 }
 
+/* PDF annotation shapes are painted ABOVE the text layer (z-index 5 vs 3), so
+   giving them pointer-events would swallow the mousedown that starts a text
+   selection — already-annotated text became impossible to select for copy or
+   translate, and a mousedown landing on a shape instead of a glyph made the
+   browser snap the selection to the whole block.  They stay pointer-transparent
+   and clicks are resolved geometrically by findAnnotationAtPoint() instead.
+   Comment pins are real buttons sitting beside the line, so they keep events. */
 .annotation-layer .highlight,
 .annotation-layer .underline,
+.annotation-layer .area-box {
+    pointer-events: none;
+}
+
+/* The image viewer has no text layer, so nothing is blocked there. */
 .annotation-layer .comment-pin,
-.annotation-layer .area-box,
 .image-annotation-layer .highlight,
 .image-annotation-layer .comment-pin,
 .image-annotation-layer .area-box {
@@ -4550,6 +4586,30 @@ input[type="number"].citation-topk-val:focus {
 .tree-ctx-btn:hover { color: var(--accent); background: var(--accent-glow); }
 .tree-item.active .tree-ctx-btn { color: var(--text-secondary); display: flex; }
 .tree-item.active .tree-ctx-btn:hover { color: var(--accent); background: var(--accent-glow); }
+
+/* Colour row at the head of the annotation context menu — recolour in one
+   click without opening the sidebar. */
+.ctx-colors {
+    display: flex;
+    gap: 5px;
+    padding: 5px 6px 7px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 3px;
+}
+
+.ctx-color {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    border: 1px solid rgba(0,0,0,0.2);
+    padding: 0;
+    cursor: pointer;
+    transition: transform 0.12s;
+}
+.ctx-color:hover { transform: scale(1.15); }
+.ctx-color.active { box-shadow: 0 0 0 2px var(--accent); }
+
+.ctx-menu-annotation { min-width: 190px; }
 
 .ctx-menu {
     position: fixed;
@@ -10072,17 +10132,67 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
 .doc-ann-btn:hover { background: var(--bg-tertiary); }
 .doc-ann-btn .lucide { width: 12px; height: 12px; }
 
+/* Selection action bar.  positionSelectionPopup() centres it over the selection
+   and clamps it into the viewport, so it sets left/top itself — no transform
+   offset, which used to make an edge-of-screen selection push it off-screen. */
 .copy-text-popup {
+    position: fixed;
     z-index: 9000;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     box-shadow: 0 4px 20px rgba(0,0,0,0.25);
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 2px;
     padding: 4px;
-    transform: translateX(-50%);
+    max-width: min(460px, calc(100vw - 16px));
 }
+
+.sel-act-sep {
+    width: 1px;
+    align-self: stretch;
+    margin: 2px 3px;
+    background: var(--border-color);
+}
+
+.sel-act-swatch {
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
+    border: 1px solid rgba(0,0,0,0.25);
+    flex-shrink: 0;
+}
+
+.sel-act-caret .lucide { width: 11px; height: 11px; }
+.sel-act-caret { padding: 5px 4px; }
+
+/* Colour row: hidden until the caret is pressed, then it wraps onto its own
+   line under the actions.  One click on a swatch both remembers the colour and
+   highlights in it. */
+.sel-act-colors {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+    padding: 4px 4px 2px;
+    border-top: 1px solid var(--border-color);
+    margin-top: 2px;
+}
+.sel-act-colors.hidden { display: none; }
+
+.sel-act-color {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid rgba(0,0,0,0.2);
+    cursor: pointer;
+    padding: 0;
+    transition: transform 0.12s;
+}
+.sel-act-color:hover { transform: scale(1.15); }
+
+.sel-act-btn,
 .copy-text-btn,
 .translate-text-btn {
     display: inline-flex;
@@ -10099,8 +10209,10 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
     transition: background 0.12s;
     white-space: nowrap;
 }
+.sel-act-btn:hover,
 .copy-text-btn:hover,
 .translate-text-btn:hover { background: var(--bg-tertiary); }
+.sel-act-btn .lucide,
 .copy-text-btn .lucide,
 .translate-text-btn .lucide { width: 12px; height: 12px; }
 

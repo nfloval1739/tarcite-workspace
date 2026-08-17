@@ -72,6 +72,105 @@ function renderConfidenceBadges(r) {
     return `<span class="conf-badge source">${total} Source${total !== 1 ? 's' : ''}</span>` + parts.join('');
 }
 
+/* ── PDF text normalisation ────────────────────────────────────────────────
+   Text pulled out of a pdf.js text layer arrives one *visual* line at a time:
+   every soft wrap is a newline, and words the typesetter broke across lines
+   keep their hyphen ("seques-\ntration").  Pasted into a manuscript that reads
+   as ragged, mis-spelt prose, so everything leaving the viewer as text — the
+   clipboard, the translator, and the quote stored on an annotation — is run
+   through here first.  Verbatim text stays available (Shift-click Copy) for
+   when the layout itself matters, e.g. copying a table or a code listing. */
+
+const PDF_LIGATURES = {
+    'ﬀ': 'ff', 'ﬁ': 'fi', 'ﬂ': 'fl', 'ﬃ': 'ffi',
+    'ﬄ': 'ffl', 'ﬅ': 'ft', 'ﬆ': 'st',
+};
+
+// Combining forms whose hyphen belongs to the word rather than to the line
+// break, so "socio-\neconomic" stays hyphenated while "seques-\ntration" is
+// rejoined.  A dictionary would settle every case; this covers the prefixes
+// that actually recur in academic prose.
+const PDF_COMPOUND_PREFIXES = new Set([
+    'anti', 'auto', 'bio', 'co', 'counter', 'cross', 'de', 'eco', 'ex', 'extra',
+    'geo', 'high', 'hyper', 'inter', 'intra', 'long', 'low', 'macro', 'meta',
+    'micro', 'mid', 'multi', 'neo', 'non', 'over', 'post', 'pre', 'pro',
+    'pseudo', 'quasi', 're', 'self', 'semi', 'short', 'socio', 'sub', 'super',
+    'trans', 'ultra', 'un', 'under', 'well',
+]);
+
+function isPdfLineBreakHyphen(before, after) {
+    const tail = /([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ]*)-$/.exec(before);
+    if (!tail) return false;                       // nothing word-like before the hyphen
+    if (!/^[a-zà-ÿ]/.test(after)) return false;    // continuation must look like a word tail
+    const stem = tail[1];
+    if (PDF_COMPOUND_PREFIXES.has(stem.toLowerCase())) return false;
+    if (/[A-ZÀ-Þ]/.test(stem.slice(1))) return false;  // inner capital → likely a real compound
+    return true;
+}
+
+/* A word split across a line break is put back together with no space either
+   way — the only question the hyphen poses is whether it survives the join. */
+function joinPdfLines(before, after) {
+    const brokenWord = /[A-Za-zÀ-ÿ]-$/.test(before) && /^[A-Za-zÀ-ÿ]/.test(after);
+    if (!brokenWord) return before + ' ' + after;
+    return isPdfLineBreakHyphen(before, after)
+        ? before.slice(0, -1) + after     // "seques-" + "tration"
+        : before + after;                 // "socio-" + "economic"
+}
+
+/* A pdf.js selection loses paragraph boundaries: consecutive lines are just
+   newlines whether or not a paragraph ended.  A line that both ends a sentence
+   and stops noticeably short of the block's measure is where a paragraph ended,
+   which is the standard reflow heuristic; it needs a few lines to estimate the
+   measure from, so short selections are left alone. */
+function splitPdfParagraphs(lines) {
+    if (lines.length < 3) return [lines];
+    const measure = Math.max(...lines.map(l => l.length));
+    const blocks = [[]];
+    lines.forEach((line, i) => {
+        blocks[blocks.length - 1].push(line);
+        const isLast = i === lines.length - 1;
+        const endsSentence = /[.!?]["'”’)\]]?$/.test(line);
+        if (!isLast && endsSentence && line.length < measure * 0.85) blocks.push([]);
+    });
+    return blocks.filter(b => b.length);
+}
+
+function normalizePdfText(text) {
+    if (!text) return '';
+
+    const cleaned = String(text)
+        .replace(/\r\n?/g, '\n')
+        .replace(/[­​‌﻿]/g, '')   // soft hyphen, zero-width marks
+        .replace(/[ﬀ-ﬆ]/g, ch => PDF_LIGATURES[ch] || ch)
+        .replace(/[ \t   ]+/g, ' ');     // collapse spaces incl. NBSP
+
+    // Explicit blank lines are a real break the PDF gave us; keep them.
+    const sourceBlocks = cleaned.split('\n')
+        .map(l => l.trim())
+        .join('\n')
+        .split(/\n{2,}/)
+        .map(block => block.split('\n').filter(Boolean))
+        .filter(lines => lines.length);
+
+    const paragraphs = [];
+    sourceBlocks.forEach(lines => {
+        splitPdfParagraphs(lines).forEach(block => {
+            let out = '';
+            block.forEach((line, i) => {
+                out = i === 0 ? line : joinPdfLines(out, line);
+            });
+            paragraphs.push(out);
+        });
+    });
+
+    return paragraphs
+        .join('\n\n')
+        .replace(/ +([,.;:!?])/g, '$1')
+        .replace(/ {2,}/g, ' ')
+        .trim();
+}
+
 function debounce(fn, delay) {
     let timer;
     return function(...args) {

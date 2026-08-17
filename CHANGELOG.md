@@ -7,7 +7,32 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.46] - 2026-08-17
+
 ### Added
+- **Selection action bar in the PDF/document viewer** — releasing a selection
+  with the default tool now offers Highlight (in any palette colour), Underline,
+  Note, Copy and Translate in one popup, so the tool no longer has to be chosen
+  *before* selecting. The dedicated highlight/underline/comment tools still act
+  the moment you release, for fast repeated marking. The popup is anchored to
+  the selection and clamped to the viewport instead of being placed at the mouse
+  point, where it could land off-screen.
+- **Copied PDF text is reflowed into prose.** Text taken from a PDF used to
+  arrive one visual line at a time, with the typesetter's hyphens intact
+  ("seques-\nter"). The clipboard (both the Copy button and Cmd/Ctrl+C), the
+  translator input, and the quote stored on every annotation now go through a
+  normaliser that rejoins wrapped lines, repairs broken words while leaving real
+  compounds ("socio-economic") alone, expands ligatures, strips soft hyphens and
+  keeps paragraph breaks. Shift-clicking Copy still copies verbatim, for tables
+  and code listings.
+- **Right-click menu on annotations in the page** — recolour, add or edit the
+  note, copy the quote, reveal in the list, or delete, without going to the
+  sidebar. Works on PDF pages (resolved geometrically) and on image overlays.
+- **Viewer keyboard shortcuts**: `Cmd/Ctrl+F` focuses the PDF search, `←`/`→`
+  and `PageUp`/`PageDown` change page, `Home`/`End` jump to the first/last page,
+  `+`/`-`/`0` zoom, `V`/`H`/`U`/`C`/`A`/`D` pick a tool and `Esc` returns to the
+  select tool. All of it is inert while typing in a field or when a dialog is
+  open. A selection made with Shift+arrows now raises the action bar too.
 - Open-source project scaffolding: AGPL-3.0 license, README, contributing guide,
   code of conduct, security policy, issue/PR templates.
 - `Lint` GitHub Actions workflow (ruff).
@@ -44,6 +69,25 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
     backing off to 30 s when idle and pausing while the window is hidden.
 
 ### Fixed
+- **Annotated text is selectable again.** Highlight, underline and area shapes
+  are painted above the PDF text layer and were pointer-interactive so they
+  could be clicked, which meant they swallowed the mousedown that starts a
+  selection: dragging across an underlined sentence selected nothing at all, and
+  a drag that began on a highlight made the browser snap the selection to the
+  whole block. The shapes are now pointer-transparent and clicks on them are
+  resolved geometrically, so clicking one still jumps to its entry in the list.
+  Ink strokes are hit-tested with `isPointInStroke()`, and note-connection lines
+  no longer intercept clicks along their whole length (their endpoints still do).
+  Selecting text and releasing over a highlight also used to suppress the
+  Copy/Translate popup entirely; it no longer does.
+- Ported pdf.js's `endOfContent` selection guard, which the bundled `pdf.mjs`
+  API build does not ship (it lives in the viewer's `TextLayerBuilder`). It caps
+  how far a selection can jump when the pointer strays into the gaps between
+  text spans.
+- The note drawer no longer springs open after every highlight — only the
+  comment tool and the new Note action open it.
+- Annotations created in the document (txt/md/csv/docx) viewer are now covered
+  by annotation undo, like PDF ones already were.
 - Annotations created outside the PDF viewer (MCP tools, API clients) now
   anchor to the page automatically: when the PDF is opened, each quote-only
   annotation's passage is located in the PDF text, its highlight rectangles
@@ -94,6 +138,7 @@ First public release. Highlights of the application as it stands:
 Versions prior to 0.2.26 (the `v.01.x` and early `v.02.x` series) were private beta
 builds and are not itemized here.
 
-[Unreleased]: https://github.com/nfloval1739/tarcite-workspace/compare/v0.2.36...HEAD
+[Unreleased]: https://github.com/nfloval1739/tarcite-workspace/compare/v0.2.46...HEAD
+[0.2.46]: https://github.com/nfloval1739/tarcite-workspace/compare/v0.2.36...v0.2.46
 [0.2.36]: https://github.com/nfloval1739/tarcite-workspace/compare/v0.2.26...v0.2.36
 [0.2.26]: https://github.com/nfloval1739/tarcite-workspace/releases/tag/v0.2.26

@@ -702,6 +702,7 @@ async function buildCollapseSnippet(pageNum, yMin, yMax, scale, skippedFrom = nu
     const textContent = await page.getTextContent();
     const tl = new pdfjsLib.TextLayer({ textContentSource: textContent, container: textLayerDiv, viewport });
     await tl.render();
+    attachTextLayerSelectionGuard(textLayerDiv);
 
     pageDiv.dataset.rendered = 'true';
     refreshIcons(snippet);
@@ -1069,6 +1070,7 @@ async function renderPdfPage(pageNum, itemKey) {
         const textContent = await page.getTextContent();
         const tl = new pdfjsLib.TextLayer({ textContentSource: textContent, container: textLayerDiv, viewport });
         await tl.render();
+        attachTextLayerSelectionGuard(textLayerDiv);
 
         pageDiv.dataset.rendered = 'true';
 
@@ -1833,6 +1835,10 @@ function _drawInkPath(parent, x1, y1, x2, y2, options = {}) {
     path.style.fill = 'none';
     path.style.opacity = String(opacity);
     path.style.strokeLinecap = 'round';
+    // The overlay spans the whole window, so a line crossing a paragraph would
+    // otherwise swallow the mousedown that starts a text selection.  The line is
+    // pointer-transparent; its endpoints stay the handle you click.
+    path.style.pointerEvents = 'none';
     if (dashed) path.style.strokeDasharray = '6 4';
     parent.appendChild(path);
 
@@ -1841,6 +1847,11 @@ function _drawInkPath(parent, x1, y1, x2, y2, options = {}) {
         c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', '4');
         c.style.fill = color;
         c.style.opacity = String(Math.min(1, opacity + 0.25));
+        // A transparent stroke widens the target to ~14px without showing;
+        // `all` counts unpainted fill/stroke as hit area, `painted` would not.
+        c.style.stroke = 'transparent';
+        c.style.strokeWidth = '10px';
+        c.style.pointerEvents = 'all';
         parent.appendChild(c);
     });
 }
@@ -2407,6 +2418,167 @@ function docViewerSearch(query) {
 
 /* ── Annotation Tools ──────────────────────────────────────────────────────── */
 
+/* ── Viewer keyboard shortcuts ──────────────────────────────────────────────
+   The viewer used to be mouse-only apart from undo: no way to page, zoom,
+   search or switch tool from the keyboard, which is punishing when you are
+   reading for an hour.  Everything here is inert unless a PDF is open and the
+   focus is not in a text field, so it can never eat someone's typing.        */
+
+const PREVIEW_TOOL_KEYS = {
+    v: 'select', h: 'highlight', u: 'underline',
+    c: 'comment', a: 'area', d: 'draw',
+};
+
+// Matches appState.previewZoom's initial value in app-state.js; "0" restores it.
+const DEFAULT_PREVIEW_ZOOM = 0.7;
+
+// Tool tooltips are rewritten whenever the open file changes, so the keyboard
+// hint has to be applied through here rather than once at startup.
+function withToolKeyHint(tool, title) {
+    const key = Object.keys(PREVIEW_TOOL_KEYS).find(k => PREVIEW_TOOL_KEYS[k] === tool);
+    return key ? `${title} (${key.toUpperCase()})` : title;
+}
+
+function isTypingTarget(el) {
+    if (!el) return false;
+    if (el.isContentEditable) return true;
+    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
+}
+
+function activatePreviewTool(tool) {
+    // Route through the button so tool switching keeps one implementation, and
+    // so a tool disabled for this file type simply does nothing.
+    const btn = document.querySelector(`#annotation-tools .tool-btn[data-tool="${tool}"]`);
+    if (btn && !btn.disabled) btn.click();
+}
+
+function pdfShortcutsActive() {
+    return appState.previewKind === 'pdf' && Boolean(appState.pdfDoc) && !appState.previewCollapsed;
+}
+
+function initPreviewKeyboardShortcuts() {
+    // Advertise the keys in the tooltips that already exist.
+    Object.values(PREVIEW_TOOL_KEYS).forEach(tool => {
+        const btn = document.querySelector(`#annotation-tools .tool-btn[data-tool="${tool}"]`);
+        if (btn && !btn.title.includes('(')) {
+            btn.title = withToolKeyHint(tool, btn.title);
+            btn.setAttribute('aria-label', btn.title);
+        }
+    });
+
+    document.addEventListener('keydown', e => {
+        if (isTypingTarget(e.target) || isTypingTarget(document.activeElement)) return;
+        // A modal dialog owns the keyboard while it is up.
+        if (document.querySelector('.modal-backdrop:not(.hidden)')) return;
+
+        const mod = e.metaKey || e.ctrlKey;
+
+        if (mod && !e.shiftKey && e.key.toLowerCase() === 'f' && pdfShortcutsActive()) {
+            const input = document.getElementById('pdf-search-input');
+            if (input) {
+                e.preventDefault();
+                input.focus();
+                input.select();
+            }
+            return;
+        }
+        if (mod || e.altKey) return;      // leave every other accelerator alone
+
+        if (e.key === 'Escape' && appState.annotationTool !== 'select' && !appState.pdfFullscreen) {
+            activatePreviewTool('select');
+            return;
+        }
+        if (!pdfShortcutsActive()) return;
+
+        const tool = PREVIEW_TOOL_KEYS[e.key.toLowerCase()];
+        if (tool) {
+            e.preventDefault();
+            activatePreviewTool(tool);
+            return;
+        }
+
+        switch (e.key) {
+            case 'ArrowLeft':
+            case 'PageUp':
+                e.preventDefault();
+                changePage(-1);
+                break;
+            case 'ArrowRight':
+            case 'PageDown':
+                e.preventDefault();
+                changePage(1);
+                break;
+            case 'Home':
+                e.preventDefault();
+                goToPdfPage(1, true);
+                break;
+            case 'End':
+                e.preventDefault();
+                goToPdfPage(appState.previewTotalPages || appState.pdfDoc.numPages, true);
+                break;
+            case '+':
+            case '=':
+                e.preventDefault();
+                changeZoom(0.15);
+                break;
+            case '-':
+            case '_':
+                e.preventDefault();
+                changeZoom(-0.15);
+                break;
+            case '0':
+                e.preventDefault();
+                changeZoom(DEFAULT_PREVIEW_ZOOM - appState.previewZoom);
+                break;
+        }
+    });
+
+    // A selection made with Shift+arrows deserves the same actions as one made
+    // with the mouse; the popup is only ever bound to mouseup otherwise.
+    document.addEventListener('keyup', e => {
+        if (appState.annotationTool !== 'select') return;
+        if (!['Shift', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
+        if (isTypingTarget(e.target) || isTypingTarget(document.activeElement)) return;
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed || !selection.toString().trim()) return;
+        if (!getCopyTranslateSelectionSurface(selection)) return;
+        showSelectionPopup(null);
+    });
+
+    /* Cmd/Ctrl+C is how most people copy, so it has to produce the same clean
+       prose the Copy button does — otherwise the fix only works for people who
+       find the popup.  Mirrors what the pdf.js viewer does for the same reason. */
+    document.addEventListener('copy', e => {
+        const selection = window.getSelection();
+        const surface = getCopyTranslateSelectionSurface(selection);
+        if (!surface?.classList?.contains('text-layer')) return;
+        const raw = selection.toString();
+        if (!raw.trim() || !e.clipboardData) return;
+        e.clipboardData.setData('text/plain', normalizePdfText(raw));
+        e.preventDefault();
+    });
+}
+
+/* The toolbar markup is the single source of truth for the palette, so the
+   selection popup and the toolbar can never drift apart. */
+function annotationPaletteColors() {
+    const colors = [...document.querySelectorAll('#annotation-tools .color-btn')]
+        .map(b => b.dataset.color)
+        .filter(Boolean);
+    return colors.length ? colors : SWATCH_COLORS;
+}
+
+function setAnnotationColor(color) {
+    if (!color) return;
+    appState.annotationColor = color;
+    document.querySelectorAll('#annotation-tools .color-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.color === color);
+    });
+    document.querySelectorAll('#copy-text-popup .sel-act-swatch').forEach(s => {
+        s.style.background = color;
+    });
+}
+
 function initAnnotationTools() {
     const annotationToolButtons = document.querySelectorAll('#annotation-tools .tool-btn[data-tool]');
     annotationToolButtons.forEach(btn => {
@@ -2441,11 +2613,7 @@ function initAnnotationTools() {
     });
 
     document.querySelectorAll('.color-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            appState.annotationColor = btn.dataset.color;
-        });
+        btn.addEventListener('click', () => setAnnotationColor(btn.dataset.color));
     });
 
     const drawSizeInput = document.getElementById('draw-size-input');
@@ -2469,6 +2637,7 @@ function initAnnotationTools() {
     document.addEventListener('mouseup', handleTextSelection);
     initAreaSelection();
     initDrawTool();
+    initAnnotationHitTesting();
 }
 
 function updatePreviewToolAvailability() {
@@ -2490,7 +2659,7 @@ function updatePreviewToolAvailability() {
     const drawBtn = document.querySelector('#annotation-tools .tool-btn[data-tool="draw"]');
     if (areaBtn) {
         areaBtn.disabled = !isPdf && !isImage;
-        areaBtn.title = (isPdf || isImage) ? 'Select area' : 'Select area is available for PDF and image files';
+        areaBtn.title = withToolKeyHint('area', (isPdf || isImage) ? 'Select area' : 'Select area is available for PDF and image files');
         areaBtn.setAttribute('aria-label', areaBtn.title);
 
         if (!isPdf && !isImage && appState.annotationTool === 'area') {
@@ -2504,7 +2673,7 @@ function updatePreviewToolAvailability() {
     }
     if (drawBtn) {
         drawBtn.disabled = !isPdf && !isImage;
-        drawBtn.title = (isPdf || isImage) ? 'Freehand draw' : 'Freehand draw is available for PDF and image files';
+        drawBtn.title = withToolKeyHint('draw', (isPdf || isImage) ? 'Freehand draw' : 'Freehand draw is available for PDF and image files');
         drawBtn.setAttribute('aria-label', drawBtn.title);
 
         if (!isPdf && !isImage && appState.annotationTool === 'draw') {
@@ -2522,9 +2691,9 @@ function updatePreviewToolAvailability() {
     [highlightBtn, underlineBtn, selectBtn].forEach(btn => {
         if (!btn) return;
         btn.disabled = isImage;
-        btn.title = isImage
-            ? `${btn.dataset.tool.charAt(0).toUpperCase() + btn.dataset.tool.slice(1)} is not available for images`
-            : btn.dataset.tool.charAt(0).toUpperCase() + btn.dataset.tool.slice(1);
+        const label = btn.dataset.tool.charAt(0).toUpperCase() + btn.dataset.tool.slice(1);
+        btn.title = withToolKeyHint(btn.dataset.tool,
+            isImage ? `${label} is not available for images` : label);
         btn.setAttribute('aria-label', btn.title);
     });
 
@@ -2952,6 +3121,106 @@ function getTextLayerFromNode(node) {
         el = el.parentElement;
     }
     return null;
+}
+
+/* ── PDF text-selection guard ───────────────────────────────────────────────
+   A pdf.js text layer is a sparse grid of absolutely positioned spans with gaps
+   between them.  When the pointer drags across a gap the browser has no glyph to
+   anchor on and extends the selection to the end of the layer, which is why a
+   drag would sometimes snap to the whole page instead of the sentence.  pdf.js's
+   own viewer (TextLayerBuilder, not shipped with the pdf.mjs API build we use)
+   fixes this with a sentinel element: it parks below the content while idle, and
+   during a drag it is re-parented next to the span being modified so a stray
+   pointer can at most swallow that one span.  Ported here; styling lives in
+   style.css under `.endOfContent`.                                           */
+
+const _textLayerEndMarkers = new Map();   // text layer div → its .endOfContent
+let _pdfSelectionGuardReady = false;
+
+function attachTextLayerSelectionGuard(textLayerDiv) {
+    if (!textLayerDiv) return;
+    let end = textLayerDiv.querySelector(':scope > .endOfContent');
+    if (!end) {
+        end = document.createElement('div');
+        end.className = 'endOfContent';
+        textLayerDiv.append(end);
+    }
+    _textLayerEndMarkers.set(textLayerDiv, end);
+    initPdfSelectionGuard();
+}
+
+function resetTextLayerSelectionGuard(textLayerDiv, end) {
+    textLayerDiv.append(end);
+    end.style.width = '';
+    end.style.height = '';
+    textLayerDiv.classList.remove('selecting');
+}
+
+function resetAllTextLayerSelectionGuards() {
+    for (const [textLayerDiv, end] of _textLayerEndMarkers) {
+        // Pages are torn down wholesale on reload/zoom; drop the stale entries.
+        if (textLayerDiv.isConnected) resetTextLayerSelectionGuard(textLayerDiv, end);
+        else _textLayerEndMarkers.delete(textLayerDiv);
+    }
+}
+
+function initPdfSelectionGuard() {
+    if (_pdfSelectionGuardReady) return;
+    _pdfSelectionGuardReady = true;
+
+    document.addEventListener('pointerup', resetAllTextLayerSelectionGuards);
+    window.addEventListener('blur', resetAllTextLayerSelectionGuards);
+    document.addEventListener('keyup', () => {
+        if (document.getSelection()?.isCollapsed) resetAllTextLayerSelectionGuards();
+    });
+
+    let prevRange = null;
+    document.addEventListener('selectionchange', () => {
+        const selection = document.getSelection();
+        if (!selection || selection.rangeCount === 0) {
+            resetAllTextLayerSelectionGuards();
+            prevRange = null;
+            return;
+        }
+
+        // Firefox splits a selection spanning several pages into several ranges.
+        const active = new Set();
+        for (let i = 0; i < selection.rangeCount; i++) {
+            const r = selection.getRangeAt(i);
+            for (const textLayerDiv of _textLayerEndMarkers.keys()) {
+                if (textLayerDiv.isConnected && !active.has(textLayerDiv) && r.intersectsNode(textLayerDiv)) {
+                    active.add(textLayerDiv);
+                }
+            }
+        }
+        for (const [textLayerDiv, end] of _textLayerEndMarkers) {
+            if (!textLayerDiv.isConnected) { _textLayerEndMarkers.delete(textLayerDiv); continue; }
+            if (active.has(textLayerDiv)) textLayerDiv.classList.add('selecting');
+            else resetTextLayerSelectionGuard(textLayerDiv, end);
+        }
+        if (active.size === 0) { prevRange = null; return; }
+
+        // Work out which end of the selection the pointer is dragging, and park
+        // the sentinel immediately beside it.
+        const range = selection.getRangeAt(0);
+        let modifyStart = false;
+        try {
+            modifyStart = Boolean(prevRange) && (
+                range.compareBoundaryPoints(Range.END_TO_END, prevRange) === 0 ||
+                range.compareBoundaryPoints(Range.START_TO_END, prevRange) === 0);
+        } catch (e) { /* ranges in different documents */ }
+
+        let anchor = modifyStart ? range.startContainer : range.endContainer;
+        if (anchor?.nodeType === Node.TEXT_NODE) anchor = anchor.parentNode;
+        const parentTextLayer = getTextLayerFromNode(anchor?.parentElement);
+        const end = parentTextLayer && _textLayerEndMarkers.get(parentTextLayer);
+        if (end) {
+            end.style.width = parentTextLayer.style.width;
+            end.style.height = parentTextLayer.style.height;
+            anchor.parentElement.insertBefore(end, modifyStart ? anchor : anchor.nextSibling);
+        }
+        prevRange = range.cloneRange();
+    });
 }
 
 function annotationTypeForTool(tool) {
@@ -4060,48 +4329,138 @@ function shouldShowCopyTranslatePopup(e, selection) {
     return !e?.target || surface.contains(e.target);
 }
 
-function showCopyPopup(e) {
+/* The union of the rectangles the browser painted for the selection — a
+   stabler anchor for the popup than the mouse point, and the only anchor
+   available when the selection was made with the keyboard. */
+function getSelectionAnchorRect(selection) {
+    if (!selection || selection.rangeCount === 0) return null;
+    const rects = [...selection.getRangeAt(0).getClientRects()].filter(r => r.width || r.height);
+    if (!rects.length) return null;
+    const left = Math.min(...rects.map(r => r.left));
+    const right = Math.max(...rects.map(r => r.right));
+    const top = Math.min(...rects.map(r => r.top));
+    const bottom = Math.max(...rects.map(r => r.bottom));
+    return { left, right, top, bottom, width: right - left, height: bottom - top };
+}
+
+// Centre the popup over the selection, then keep it inside the viewport —
+// selecting the first line of a page used to push it off the top of the screen.
+function positionSelectionPopup(popup, rect) {
+    const margin = 8;
+    const box = popup.getBoundingClientRect();
+    const left = Math.max(margin, Math.min(
+        rect.left + rect.width / 2 - box.width / 2,
+        window.innerWidth - box.width - margin));
+    let top = rect.top - box.height - 10;             // above the selection by default
+    if (top < margin) top = rect.bottom + 10;         // no room: drop below it
+    top = Math.max(margin, Math.min(top, window.innerHeight - box.height - margin));
+    popup.style.left = Math.round(left) + 'px';
+    popup.style.top = Math.round(top) + 'px';
+}
+
+async function copyTextToClipboard(text) {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch (err) {
+        console.warn('Clipboard API copy failed, falling back to document selection:', err);
+    }
+    return document.execCommand('copy');
+}
+
+/* The selection action bar.  Everything you might want to do with a passage
+   lives here — highlight in any colour, underline, start a note, copy, or
+   translate — so the active tool no longer decides what a drag means. */
+function showSelectionPopup(anchorEvent) {
     document.getElementById('copy-text-popup')?.remove();
     document.getElementById('translation-result-popup')?.remove();
+
     const selection = window.getSelection();
-    if (!shouldShowCopyTranslatePopup(e, selection)) return;
+    if (!shouldShowCopyTranslatePopup(anchorEvent, selection)) return;
     if (!selection || selection.isCollapsed) return;
-    const selectedText = selection.toString().trim();
-    if (!selectedText) return;
+    const rawText = selection.toString();
+    if (!rawText.trim()) return;
+
+    const rect = getSelectionAnchorRect(selection);
+    if (!rect) return;
+
+    // Hold our own copy of the range: acting on a button collapses the live
+    // selection in some engines before the handler reads it.
+    const range = selection.getRangeAt(0).cloneRange();
+    const canAnnotate = Boolean(appState.previewItem) &&
+        (appState.previewKind === 'pdf' || appState.previewKind === 'doc');
 
     const popup = document.createElement('div');
     popup.id = 'copy-text-popup';
     popup.className = 'copy-text-popup';
-    popup.style.cssText = `position:fixed;top:${e.clientY - 44}px;left:${e.clientX}px;`;
     popup.innerHTML = `
-        <button class="copy-text-btn" type="button">${icon('copy')} Copy</button>
-        <button class="translate-text-btn" type="button">${icon('languages')} Translate</button>`;
+        ${canAnnotate ? `
+        <button class="sel-act-btn" data-act="highlight" type="button" title="Highlight (H)">
+            <span class="sel-act-swatch" style="background:${appState.annotationColor}"></span>Highlight
+        </button>
+        <button class="sel-act-btn sel-act-caret" data-act="colors" type="button" title="Highlight in another colour" aria-label="Highlight in another colour">${icon('chevron-down')}</button>
+        <button class="sel-act-btn" data-act="underline" type="button" title="Underline (U)">${icon('underline')}</button>
+        <button class="sel-act-btn" data-act="note" type="button" title="Highlight and write a note (N)">${icon('message-square')}</button>
+        <span class="sel-act-sep"></span>` : ''}
+        <button class="sel-act-btn copy-text-btn" data-act="copy" type="button" title="Copy (hold Shift to keep the original line breaks)">${icon('copy')} Copy</button>
+        <button class="sel-act-btn translate-text-btn" data-act="translate" type="button" title="Translate">${icon('languages')} Translate</button>
+        ${canAnnotate ? `<div class="sel-act-colors hidden">
+            ${annotationPaletteColors().map(c => `<button class="sel-act-color" type="button" data-color="${c}" style="background:${c}" title="Highlight in ${c}" aria-label="Highlight in ${c}"></button>`).join('')}
+        </div>` : ''}`;
+
     (appState.pdfFullscreen ? document.getElementById('preview-pane') : document.body).appendChild(popup);
     refreshIcons(popup);
+    positionSelectionPopup(popup, rect);
 
-    popup.querySelector('.copy-text-btn').addEventListener('mousedown', async ev => {
-        ev.preventDefault();
-        let copied = false;
-        try {
-            if (navigator.clipboard?.writeText) {
-                await navigator.clipboard.writeText(selectedText);
-                copied = true;
-            }
-        } catch (err) {
-            console.warn('Clipboard API copy failed, falling back to document selection:', err);
-        }
-        if (!copied) copied = document.execCommand('copy');
-        window.getSelection()?.removeAllRanges();
-        popup.remove();
-        showCopyToast(copied ? 'Copied!' : 'Copy failed');
+    const annotate = (annotationType, color, openNote) => createAnnotationFromSelection({
+        annotationType, range, rawText, color, openNote,
     });
 
-    popup.querySelector('.translate-text-btn').addEventListener('mousedown', async ev => {
+    // mousedown + preventDefault: the selection must survive the click, since
+    // every action below is computed from it.
+    popup.addEventListener('mousedown', async ev => {
+        const swatch = ev.target.closest('.sel-act-color');
+        const btn = swatch || ev.target.closest('.sel-act-btn');
+        if (!btn) return;
         ev.preventDefault();
-        const x = e.clientX;
-        const y = e.clientY;
-        popup.remove();
-        await translateSelectedText(selectedText, x, y);
+        ev.stopPropagation();
+
+        if (swatch) {
+            setAnnotationColor(swatch.dataset.color);
+            await annotate('highlight', swatch.dataset.color, false);
+            return;
+        }
+
+        switch (btn.dataset.act) {
+            case 'colors':
+                popup.querySelector('.sel-act-colors')?.classList.toggle('hidden');
+                positionSelectionPopup(popup, rect);
+                break;
+            case 'highlight':
+                await annotate('highlight', appState.annotationColor, false);
+                break;
+            case 'underline':
+                await annotate('underline', appState.annotationColor, false);
+                break;
+            case 'note':
+                await annotate('highlight', appState.annotationColor, true);
+                break;
+            case 'copy': {
+                // Shift keeps the PDF's own line breaks, for tables and code.
+                const text = ev.shiftKey ? rawText : normalizePdfText(rawText);
+                const copied = await copyTextToClipboard(text);
+                window.getSelection()?.removeAllRanges();
+                popup.remove();
+                showCopyToast(copied ? (ev.shiftKey ? 'Copied verbatim' : 'Copied!') : 'Copy failed');
+                break;
+            }
+            case 'translate':
+                popup.remove();
+                await translateSelectedText(normalizePdfText(rawText), rect.left + rect.width / 2, rect.bottom);
+                break;
+        }
     });
 
     const dismiss = (ev) => { if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener('mousedown', dismiss); } };
@@ -4248,63 +4607,70 @@ function showCopyToast(msg) {
     setTimeout(() => toast.remove(), 1500);
 }
 
-async function handleTextSelection(e) {
-    if (appState.annotationTool === 'area') return;
-    if (appState.annotationTool === 'select') {
-        const selection = window.getSelection();
-        if (shouldShowCopyTranslatePopup(e, selection)) {
-            showCopyPopup(e);
-        } else if (!e.target.closest?.('#copy-text-popup, #translation-result-popup')) {
-            document.getElementById('copy-text-popup')?.remove();
-        }
-        return;
-    }
-    if (!appState.previewItem) return;
+/* Creates one annotation from a live selection.  Shared by the dedicated
+   highlight/underline/comment tools (which act the moment you release the
+   mouse) and by the selection popup (which lets you decide after seeing what
+   you selected) so both routes store identical records.
 
+   `rawText` is deliberately kept separate from the stored quote: the quote is
+   normalised into readable prose (see normalizePdfText), while the PDF
+   text-content matcher has to search for what the PDF actually contains,
+   hyphen breaks and all. */
+async function createAnnotationFromSelection({ annotationType, range, rawText, color, openNote = false }) {
+    if (!appState.previewItem || !range) return null;
+    const rawTrimmed = (rawText || '').trim();
+    if (!rawTrimmed) return null;
+
+    const quote = normalizePdfText(rawText) || rawTrimmed;
+    const itemKey = appState.previewItem.item_key;
     const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return;
 
-    const selectedText = selection.toString().trim();
-    if (!selectedText) return;
-
-    const range = selection.getRangeAt(0);
+    const finish = async (annotationData) => {
+        try {
+            const created = await createAnnotationForItem(itemKey, annotationData);
+            selection?.removeAllRanges();
+            document.getElementById('copy-text-popup')?.remove();
+            pushAnnotationUndo({
+                type: 'create',
+                itemKey,
+                annotation: { ...annotationData, annotation_id: created.annotation_id },
+            });
+            await loadAnnotations(itemKey);
+            if (openNote && created?.annotation_id) openNoteDrawer(created.annotation_id);
+            return created;
+        } catch (err) {
+            console.error('Annotation error:', err);
+            showSaveConfirmation('Could not save annotation');
+            return null;
+        }
+    };
 
     // ── Doc viewer branch (txt / md / csv / docx) ──────────────────────────
     const docContent = document.getElementById('doc-viewer-content');
     if (docContent && docContent.contains(range.commonAncestorContainer)) {
-        const itemKey = appState.previewItem.item_key;
-        const annotationData = {
+        return finish({
             item_key: itemKey,
             file_id: null,
             page_index: 0,
-            annotation_type: annotationTypeForTool(appState.annotationTool),
-            color: appState.annotationColor,
+            annotation_type: annotationType,
+            color,
             comment: '',
-            quote: selectedText,
-            geometry_json: JSON.stringify({ doc_offset: selectedText.slice(0, 100) }),
-        };
-        try {
-            const created = await createAnnotationForItem(itemKey, annotationData);
-            selection.removeAllRanges();
-            await loadAnnotations(itemKey);
-            if (created?.annotation_id) openNoteDrawer(created.annotation_id);
-        } catch (err) {
-            console.error('Doc annotation error:', err);
-        }
-        return;
+            quote,
+            // Anchor key stays the raw text: it is matched against the rendered
+            // document, not against the normalised quote.
+            geometry_json: JSON.stringify({ doc_offset: rawTrimmed.slice(0, 100) }),
+        });
     }
 
     // ── PDF branch ──────────────────────────────────────────────────────────
     const textLayerEl = getTextLayerFromNode(range.commonAncestorContainer) ||
-        getTextLayerFromNode(selection.anchorNode) ||
-        getTextLayerFromNode(selection.focusNode);
-    if (!textLayerEl) return;
+        getTextLayerFromNode(range.startContainer) ||
+        getTextLayerFromNode(range.endContainer);
+    if (!textLayerEl) return null;
 
     const pageDiv = textLayerEl.closest('.pdf-page');
-    if (!pageDiv) return;
+    if (!pageDiv) return null;
     const pageNum = parseInt(pageDiv.dataset.page);
-
-    const itemKey = appState.previewItem.item_key;
     const fileId = appState.previewItem.files?.[0]?.file_id;
 
     // Geometry for the annotation should reflect what the user actually dragged
@@ -4326,38 +4692,63 @@ async function handleTextSelection(e) {
     // prefers span geometry and falls back to text-content matching.
     let geometry = getSelectionGeometry(range, textLayerEl);
     if (!geometry) {
-        geometry = await getPdfTextMatchGeometry(selectedText, pageNum);
+        geometry = await getPdfTextMatchGeometry(rawTrimmed, pageNum);
     }
     if (!geometry) {
-        selection.removeAllRanges();
+        selection?.removeAllRanges();
         showSaveConfirmation('Could not locate selected text in PDF');
-        return;
+        return null;
     }
 
-    const annotationData = {
+    return finish({
         item_key: itemKey,
         file_id: fileId,
         page_index: pageNum - 1,
-        annotation_type: annotationTypeForTool(appState.annotationTool),
-        color: appState.annotationColor,
+        annotation_type: annotationType,
+        color,
         comment: '',
-        quote: selectedText,
+        quote,
         geometry_json: JSON.stringify(geometry),
-    };
+    });
+}
 
-    try {
-        const created = await createAnnotationForItem(itemKey, annotationData);
-        selection.removeAllRanges();
-        pushAnnotationUndo({
-            type: 'create',
-            itemKey,
-            annotation: { ...annotationData, annotation_id: created.annotation_id },
-        });
-        await loadAnnotations(itemKey);
-        openNoteDrawer(created.annotation_id);
-    } catch (err) {
-        console.error('Annotation error:', err);
+async function handleTextSelection(e) {
+    // Area and draw own the pointer outright; there is no text selection to act on.
+    if (appState.annotationTool === 'area' || appState.annotationTool === 'draw') return;
+
+    const selection = window.getSelection();
+
+    // The default tool offers the actions rather than performing one, so the
+    // user chooses *after* seeing what they actually selected — no more
+    // switching tools before every highlight, or highlighting by accident when
+    // all you wanted was to copy.
+    if (appState.annotationTool === 'select') {
+        if (shouldShowCopyTranslatePopup(e, selection)) {
+            showSelectionPopup(e);
+        } else if (!e.target.closest?.('#copy-text-popup, #translation-result-popup')) {
+            document.getElementById('copy-text-popup')?.remove();
+        }
+        return;
     }
+
+    // The dedicated tools still act on release — that is what they are for, and
+    // it keeps repeated highlighting fast.
+    if (!appState.previewItem) return;
+    if (!selection || selection.isCollapsed) return;
+    const rawText = selection.toString();
+    if (!rawText.trim()) return;
+
+    const annotationType = annotationTypeForTool(appState.annotationTool);
+    await createAnnotationFromSelection({
+        annotationType,
+        range: selection.getRangeAt(0),
+        rawText,
+        color: appState.annotationColor,
+        // The note drawer used to spring open after *every* annotation, which
+        // made rapid highlighting a fight with a panel nobody asked for.  Only
+        // the comment tool — whose entire purpose is the note — opens it now.
+        openNote: annotationType === 'comment',
+    });
 }
 
 function getOverlayContainer() {
@@ -5096,13 +5487,11 @@ function renderAnnotationsOnPage(pageNum, annLayer, textLayer) {
                 path.setAttribute('stroke-linecap', 'round');
                 path.setAttribute('stroke-linejoin', 'round');
                 path.setAttribute('fill', 'none');
-                path.setAttribute('pointer-events', 'stroke');
+                // Pointer-transparent so a stroke crossing a paragraph cannot eat
+                // the mousedown that starts a text selection; clicks reach it via
+                // findAnnotationAtPoint() → isPointInStroke() instead.
+                path.setAttribute('pointer-events', 'none');
                 path.dataset.annotationId = String(a.annotation_id);
-                path.style.cursor = 'pointer';
-                path.addEventListener('click', () => {
-                    const item = document.getElementById(`ann-item-${a.annotation_id}`);
-                    if (item) { item.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); item.classList.add('ann-flash'); setTimeout(() => item.classList.remove('ann-flash'), 800); }
-                });
                 svg.appendChild(path);
                 annLayer.appendChild(svg);
                 return;
@@ -5137,11 +5526,9 @@ function renderAnnotationsOnPage(pageNum, annLayer, textLayer) {
                     div.style.opacity = '0.5';
                 }
                 div.dataset.annotationId = a.annotation_id;
-                div.addEventListener('click', () => {
-                    if (a.annotation_type === 'comment') return;
-                    const item = document.getElementById(`ann-item-${a.annotation_id}`);
-                    if (item) { item.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); item.classList.add('ann-flash'); setTimeout(() => item.classList.remove('ann-flash'), 800); }
-                });
+                // No click listener: these shapes are pointer-events:none so they
+                // don't block text selection (see style.css).  initAnnotationHitTesting()
+                // resolves clicks on them geometrically.
                 annLayer.appendChild(div);
             });
 
@@ -5161,6 +5548,176 @@ function renderAnnotationsOnPage(pageNum, annLayer, textLayer) {
         } catch (e) { /* skip bad geometry */ }
     });
     refreshIcons(annLayer);
+}
+
+/* ── Annotation click-through hit-testing ───────────────────────────────────
+   PDF annotation shapes sit above the text layer and are pointer-transparent so
+   that annotated text stays selectable (see the pointer-events note in
+   style.css).  Clicking one to jump to its entry in the list therefore has to be
+   resolved geometrically here, against the same normalised geometry that was
+   used to paint it.                                                          */
+
+function flashAnnotationListItem(annotationId) {
+    const item = document.getElementById(`ann-item-${annotationId}`);
+    if (!item) return;
+    item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    item.classList.add('ann-flash');
+    setTimeout(() => item.classList.remove('ann-flash'), 800);
+}
+
+// Thin ink strokes are hard to hit exactly, so widen the stroke for the test.
+function drawPathHitsPoint(path, x, y) {
+    const svg = path.ownerSVGElement;
+    if (!svg?.createSVGPoint || !path.isPointInStroke) return false;
+    const pt = svg.createSVGPoint();
+    pt.x = x;
+    pt.y = y;
+    const painted = path.getAttribute('stroke-width');
+    path.setAttribute('stroke-width', String(Math.max(10, parseFloat(painted) || 1)));
+    let hit = false;
+    try { hit = path.isPointInStroke(pt); } catch (e) { /* detached path */ }
+    path.setAttribute('stroke-width', painted);
+    return hit;
+}
+
+function findAnnotationAtPoint(pageDiv, clientX, clientY) {
+    const annLayer = pageDiv.querySelector('.annotation-layer');
+    const refLayer = pageDiv.querySelector('.text-layer') || annLayer;
+    if (!annLayer || !refLayer) return null;
+
+    const box = refLayer.getBoundingClientRect();
+    if (!box.width || !box.height) return null;
+    const px = clientX - box.left;
+    const py = clientY - box.top;
+    const nx = px / box.width;
+    const ny = py / box.height;
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null;
+
+    const pageIndex = parseInt(pageDiv.dataset.page, 10) - 1;
+    let best = null;
+    let bestArea = Infinity;
+
+    for (const a of appState.annotations) {
+        if (a.page_index !== pageIndex) continue;
+        let geo;
+        try { geo = JSON.parse(a.geometry_json); } catch (e) { continue; }
+
+        if (a.annotation_type === 'draw') {
+            const path = annLayer.querySelector(`path[data-annotation-id="${a.annotation_id}"]`);
+            // Strokes are slim and sit on top of everything else, so a hit wins outright.
+            if (path && drawPathHitsPoint(path, px, py)) return a;
+            continue;
+        }
+
+        // Underlines are only a couple of pixels tall — pad them so the whole
+        // underlined line is clickable, matching how they read on screen.
+        const pad = a.annotation_type === 'underline' ? 4 / box.height : 0;
+        for (const r of geo.rects || []) {
+            if (nx >= r.x && nx <= r.x + r.width && ny >= r.y - pad && ny <= r.y + r.height + pad) {
+                const area = r.width * r.height;
+                if (area < bestArea) { bestArea = area; best = a; }
+                break;
+            }
+        }
+    }
+    return best;
+}
+
+function initAnnotationHitTesting() {
+    document.addEventListener('click', e => {
+        if (appState.annotationTool === 'area' || appState.annotationTool === 'draw') return;
+        // Comment pins and the annotation panel handle their own clicks.
+        if (e.target.closest?.('.comment-pin, .comment-popup, .annotation-list')) return;
+        const pageDiv = e.target.closest?.('.pdf-page');
+        if (!pageDiv) return;
+
+        // A click that ends a drag-selection is the user selecting text, not
+        // reaching for the annotation underneath it.
+        const sel = window.getSelection();
+        if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+
+        const ann = findAnnotationAtPoint(pageDiv, e.clientX, e.clientY);
+        if (!ann || ann.annotation_type === 'comment') return;
+        flashAnnotationListItem(ann.annotation_id);
+    });
+
+    document.addEventListener('contextmenu', e => {
+        if (!appState.previewItem) return;
+
+        // On the page: resolve by geometry, since the shapes are pointer-transparent.
+        const pageDiv = e.target.closest?.('.pdf-page');
+        let ann = pageDiv ? findAnnotationAtPoint(pageDiv, e.clientX, e.clientY) : null;
+
+        // Elsewhere (image overlays, the annotation list) the element knows its own id.
+        if (!ann) {
+            const el = e.target.closest?.('[data-annotation-id]');
+            const id = el ? parseInt(el.dataset.annotationId, 10) : NaN;
+            if (Number.isFinite(id)) ann = appState.annotations.find(a => a.annotation_id === id);
+        }
+        if (!ann) return;
+        showAnnotationContextMenu(e, ann);
+    });
+}
+
+/* Until now an annotation could only be managed from the sidebar list: every
+   colour change, note or deletion meant leaving the page you were reading.
+   Right-clicking the annotation itself now offers the same actions in place. */
+function showAnnotationContextMenu(event, ann) {
+    event.preventDefault();
+    event.stopPropagation();
+    hideContextMenu();
+
+    const id = ann.annotation_id;
+    const menu = document.createElement('div');
+    menu.className = 'ctx-menu ctx-menu-annotation';
+    menu.innerHTML = `
+        <div class="ctx-colors">
+            ${annotationPaletteColors().map(c => `
+                <button class="ctx-color ${c === ann.color ? 'active' : ''}" type="button" data-color="${c}"
+                        style="background:${c}" title="Colour ${c}" aria-label="Colour ${c}"></button>`).join('')}
+        </div>
+        <button class="ctx-item" type="button" data-act="note">${icon('message-square')} <span>${ann.comment ? 'Edit Note' : 'Add Note'}</span></button>
+        ${ann.quote ? `<button class="ctx-item" type="button" data-act="copy">${icon('copy')} <span>Copy Quote</span></button>` : ''}
+        <button class="ctx-item" type="button" data-act="reveal">${icon('list')} <span>Show in List</span></button>
+        <div class="ctx-sep"></div>
+        <button class="ctx-item danger" type="button" data-act="delete">${icon('trash-2')} <span>Delete</span></button>
+    `;
+
+    getOverlayContainer().appendChild(menu);
+    _activeContextMenu = menu;
+
+    const box = menu.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(event.clientX, window.innerWidth - box.width - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(event.clientY, window.innerHeight - box.height - 8)) + 'px';
+    refreshIcons(menu);
+
+    menu.addEventListener('click', async ev => {
+        const swatch = ev.target.closest('.ctx-color');
+        if (swatch) {
+            hideContextMenu();
+            await applyAnnotationColor(id, swatch.dataset.color);
+            return;
+        }
+        const btn = ev.target.closest('.ctx-item');
+        if (!btn) return;
+        hideContextMenu();
+        switch (btn.dataset.act) {
+            case 'note':
+                openNoteDrawer(id);
+                break;
+            case 'copy': {
+                const copied = await copyTextToClipboard(normalizePdfText(ann.quote));
+                showCopyToast(copied ? 'Quote copied!' : 'Copy failed');
+                break;
+            }
+            case 'reveal':
+                flashAnnotationListItem(id);
+                break;
+            case 'delete':
+                await deleteAnnotation(id);
+                break;
+        }
+    });
 }
 
 function renderAnnotationsOnImage() {
@@ -5497,23 +6054,6 @@ async function applyAnnotationColor(id, newColor) {
         });
         if (appState.previewItem) loadAnnotations(appState.previewItem.item_key);
     } catch (err) { console.error('Color patch error:', err); }
-}
-
-async function openEditComment(id) {
-    const ann = appState.annotations.find(a => a.annotation_id === id);
-    if (!ann) return;
-    const newComment = await showCommentDialog(ann.comment || '');
-    if (newComment === null) return;
-    try {
-        await patchAnnotation({ ...ann, comment: newComment });
-        pushAnnotationUndo({
-            type: 'update',
-            itemKey: ann.item_key,
-            before: { ...ann },
-            after: { ...ann, comment: newComment },
-        });
-        if (appState.previewItem) loadAnnotations(appState.previewItem.item_key);
-    } catch (err) { console.error('Comment patch error:', err); }
 }
 
 async function deleteAnnotation(id) {

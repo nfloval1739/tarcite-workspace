@@ -9,7 +9,7 @@ MINIMAL_STAGE="dist/minimal"
 MINIMAL_APP="$MINIMAL_STAGE/TarCiteWorkspace.app"
 MINIMAL_DMG="dist/TarCiteWorkspace_minimal-mac.dmg"
 ICNS_OUT="packaging/TarCiteWorkspace.icns"
-APP_VERSION="0.2.36"
+APP_VERSION="0.2.46"
 
 echo "=== Staging minimal app ==="
 rm -rf "$MINIMAL_STAGE"

@@ -16,7 +16,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_all, collect_sub
 # ---------------------------------------------------------------------------
 
 APP_VERSION = (0, 2, 36, 0)
-APP_VERSION_STR = "0.2.36"
+APP_VERSION_STR = "0.2.46"
 
 win_version_info = None
 if sys.platform == "win32":
@@ -263,8 +263,8 @@ if sys.platform == "darwin":
             "NSHighResolutionCapable": True,
             "CFBundleName": "TarCite Workspace",
             "CFBundleDisplayName": "TarCite Workspace",
-            "CFBundleVersion": "0.2.36",
-            "CFBundleShortVersionString": "0.2.36",
+            "CFBundleVersion": "0.2.46",
+            "CFBundleShortVersionString": "0.2.46",
             "NSCameraUsageDescription": "",
             "NSMicrophoneUsageDescription": "",
         },
