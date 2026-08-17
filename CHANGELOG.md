@@ -8,6 +8,27 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Sentiment now reads Indonesian, and admits what it cannot read.** The
+  polarity lexicons were English-only, so once the Unicode tokeniser landed an
+  Indonesian corpus tokenised correctly and then matched nothing — the card drew
+  a confident "100% Neutral" donut over text that was plainly positive or
+  negative. Indonesian terms were added alongside the English ones, with
+  negation handling (English and Indonesian) so "tidak berhasil" and "not
+  effective" score negative rather than positive. Annotations containing no word
+  the lexicon knows are now reported as **"not scored"** rather than counted as
+  neutral, with the count stated on the card.
+- **Per-chart Data / SVG / PNG export in Themes → Analysis.** The export chips
+  existed only in Project Analysis, so the library-wide dashboard — where most
+  reading happens — could export the whole report but not the single figure you
+  want in a paper. Both dashboards now share one set of exporters that resolve
+  their data, filenames and DOM from whichever dashboard is on screen.
+- **Scope and method block in the exported analysis report.** The report stated
+  only a timestamp, the active filter and a count. It now records the source
+  (library or project), annotations and documents included, distinct themes,
+  date range, filters, the theme level used, chart truncation limits, the
+  tokenisation and stop-word languages, the sentiment method, the saturation
+  criterion and what κ does and does not cover, plus the app version — the
+  provenance a reader needs when a figure appears in a thesis.
 - **Codebook roll-up in both analysis dashboards.** Themes are a tree and coding
   normally happens at the leaves, but every card counted leaves only — a parent
   holding 30 annotations across three children rendered no bar at all, while a

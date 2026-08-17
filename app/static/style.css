@@ -9446,6 +9446,12 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
     color: var(--accent);
 }
 
+/* Cards flagging a limit in their own data (e.g. text the lexicon cannot read). */
+.analysis-warn {
+    font-size: 10px;
+    color: #f59e0b;
+}
+
 /* Inter-rater card: per-code prevalence and instability warnings. */
 .irr-n { font-size: 10px; color: var(--text-muted); font-weight: 400; margin-left: 4px; }
 .irr-warn { color: #f59e0b; }

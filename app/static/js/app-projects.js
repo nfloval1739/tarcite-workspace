@@ -450,6 +450,7 @@ function renderProjectCodingReview(project, codebookTagIds = new Set()) {
 }
 
 function renderProjectAnalysis(project, codebookTagIds = new Set()) {
+    setAnalysisSource('project');
     /* The KPI row measures the codebook as authored — how much of it has
        evidence, what was coded outside it — so it must see the leaves exactly
        as coded. Only the analytical cards below take the roll-up, otherwise
@@ -549,8 +550,31 @@ function renderProjectAnalysis(project, codebookTagIds = new Set()) {
     `;
 }
 
+/* Both dashboards render the same cards with the same export chips, so the
+   exporters below resolve their data, their filenames and their DOM through
+   here instead of assuming the project view.  Whichever dashboard renders last
+   owns the chips the user can currently see. */
+let _analysisSource = 'project';   // 'project' | 'library'
+
+function setAnalysisSource(source) {
+    _analysisSource = source === 'library' ? 'library' : 'project';
+}
+
+function _analysisContainerSelector() {
+    return _analysisSource === 'library' ? '#analysis-content' : '#project-view-content';
+}
+
+function _analysisNetworkCanvasId() {
+    return _analysisSource === 'library' ? 'network-canvas' : 'proj-network-canvas';
+}
+
+function _analysisCardSvg(card) {
+    return document.querySelector(`${_analysisContainerSelector()} [data-analysis-card="${card}"] svg`);
+}
+
 function _projectAnalysisAnnotations() {
-    // Mirrors renderProjectAnalysis so a CSV matches the chart it came from.
+    // Mirrors the dashboard that rendered, so a CSV matches the chart it came from.
+    if (_analysisSource === 'library') return _rollupItems(_filteredAnnotations());
     return _rollupItems(appState.activeProject?.annotations || []);
 }
 
@@ -576,6 +600,7 @@ function _downloadTextFile(filename, content, type = 'text/plain;charset=utf-8;'
 }
 
 function _projectAnalysisSlug() {
+    if (_analysisSource === 'library') return 'library';
     const name = appState.activeProject?.name || 'project';
     return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'project';
 }
@@ -694,7 +719,7 @@ function exportProjectNetworkData() {
 }
 
 function exportProjectNetworkPng() {
-    const canvas = document.getElementById('proj-network-canvas');
+    const canvas = document.getElementById(_analysisNetworkCanvasId());
     if (!canvas || canvas.style.display === 'none') { alert('No project network image to export.'); return; }
     const a = document.createElement('a');
     a.href = canvas.toDataURL('image/png');
@@ -703,8 +728,8 @@ function exportProjectNetworkPng() {
 }
 
 function exportProjectNetworkSvg() {
-    if (!_netState || _netState.canvas?.id !== 'proj-network-canvas') {
-        alert('Open Project Analysis first so the network can be exported.');
+    if (!_netState || _netState.canvas?.id !== _analysisNetworkCanvasId()) {
+        alert('Open the analysis view first so the network can be exported.');
         return;
     }
     const { nodes, edgeList, idxMap, maxW, edgeStyle, W, H } = _netState;
@@ -756,7 +781,7 @@ function exportProjectSaturationData() {
 }
 
 function exportProjectSaturationSvg() {
-    const svg = document.querySelector('#project-view-content [data-analysis-card="saturation"] svg');
+    const svg = _analysisCardSvg("saturation");
     if (!svg) { alert('No saturation SVG to export.'); return; }
     const clone = svg.cloneNode(true);
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
@@ -783,7 +808,7 @@ function exportProjectSaturationSvg() {
 }
 
 function exportProjectSaturationPng() {
-    const svg = document.querySelector('#project-view-content [data-analysis-card="saturation"] svg');
+    const svg = _analysisCardSvg("saturation");
     if (!svg) { alert('Open Project Analysis first to render the saturation chart.'); return; }
     const clone = svg.cloneNode(true);
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
@@ -853,7 +878,7 @@ function _buildThemeFrequencySvg() {
 
 function _buildSentimentSvg() {
     // Re-use the DOM SVG element for sentiment (donut already rendered)
-    const el = document.querySelector('#project-view-content [data-analysis-card="sentiment"] svg');
+    const el = _analysisCardSvg("sentiment");
     if (!el) return null;
     const clone = el.cloneNode(true);
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
