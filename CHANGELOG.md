@@ -7,6 +7,68 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Codebook roll-up in both analysis dashboards.** Themes are a tree and coding
+  normally happens at the leaves, but every card counted leaves only — a parent
+  holding 30 annotations across three children rendered no bar at all, while a
+  4-annotation flat theme outranked it. A "Themes: As coded / Top level" control
+  folds every theme into its top-level parent before any card sees the data, and
+  cards say when they are showing rolled-up counts. Project KPIs (coding
+  progress, codebook coverage) stay at leaf level, since they measure the
+  codebook as authored.
+- Multilingual text analysis: word frequency, TF-IDF and keyword sentiment now
+  tokenise with `Intl.Segmenter` instead of `[a-z]{3,}`, and Indonesian stop
+  words ship alongside the English list. Previously an Indonesian corpus ranked
+  *yang*, *dan* and *dengan* as its main topics, Arabic/Chinese/Cyrillic text
+  produced no tokens at all, and accented Latin was cut into fragments
+  ("café" → "caf").
+- Every truncating card now states what it is hiding ("showing top 15 of 40
+  themes"), including the theme network, which caps at the 60 most-used themes.
+
+### Fixed
+- **Saturation could be declared by a single annotation.** The test was "did the
+  very last annotation add a new theme?", so one trailing annotation flipped the
+  verdict to "Saturated" and it was reported as a confident percentage.
+  Saturation now requires a run of at least 10% of the corpus (minimum 5
+  annotations) with no new theme, states the criterion and the observed run, and
+  declines to judge fewer than 15 annotations. Coding order comes from
+  `created_at` where available rather than the autoincrement id, which
+  mis-orders bulk-imported corpora.
+- **KWIC reported a fabricated match count.** Its 40-result cap used `return`
+  inside a `forEach`, which continues rather than breaks, so each remaining
+  annotation still contributed one more hit: 75 real matches were reported as
+  "51", and 180 as "86". Every match is now counted, up to 200 are rendered, and
+  the card distinguishes the two.
+- **TF-IDF ranked the wrong themes and overstated its own method.** Themes were
+  taken with `slice(0, 6)` over an object keyed by tag id — and integer-like
+  keys iterate numerically — so it always analysed the six *oldest* themes and
+  computed IDF over only those, while the subtitle claimed a comparison against
+  "the rest of the corpus". IDF now spans every theme with enough text, and the
+  six shown are the six largest.
+- **Theme × Document matrix showed arbitrary documents.** Columns were the first
+  eight encountered, and since the API orders annotations by `item_key` that was
+  the eight lexicographically smallest keys; in testing it omitted the four
+  documents holding 200 of 208 annotations. Columns are now the most-coded
+  documents.
+- **Inter-rater κ was reported as a flat mean over codes**, so a code used once
+  moved the headline as much as one used 200 times: perfect agreement on 100
+  annotations plus one disputed rare code read as κ=0.495, "Moderate". The
+  headline is now prevalence-weighted (0.980 for that case) with the unweighted
+  mean shown beside it, each code displays the n behind it, codes used fewer
+  than 10 times are flagged as unstable, and the card reports how many
+  annotations had no counterpart in the other coder's export — disagreement
+  about *what* to code, which κ cannot measure.
+- The theme network ran a 220-iteration O(n²) layout over every theme,
+  synchronously: 200 themes measured ~500 ms and 400 themes ~2 s, on every
+  dashboard render — and the annotation search box triggers one per keystroke.
+  Node count is capped and the render is debounced; the same corpora now lay out
+  in ~50 ms.
+- Annotations Over Time bucketed by calendar month only, so 400 annotations
+  inside one month rendered "Not enough dated annotations yet". Buckets now
+  follow the span (day / week / month).
+- The sentiment card now states that it scores the quote and your note together,
+  so a critical note reading the source as negative is at least visible.
+
 ## [0.2.46] - 2026-08-17
 
 ### Added

@@ -2098,11 +2098,15 @@ function filterAnnotationsView() {
     if (appState.annotationsViewItems.length === 0) {
         loadAnnotationsViewData();
     } else if (appState.annotationsViewMode === 'analysis') {
-        renderAnalysisDashboard();
+        // Rebuilding the dashboard means recomputing 13 cards and re-running the
+        // network layout; the search box calls this on every keystroke.
+        _renderAnalysisDashboardDebounced();
     } else {
         renderAnnotationsView();
     }
 }
+
+const _renderAnalysisDashboardDebounced = debounce(renderAnalysisDashboard, 250);
 
 function renderAnnotationsView() {
     const content = document.getElementById('annotations-view-content');
@@ -2512,8 +2516,22 @@ function _filteredAnnotations() {
 function renderAnalysisDashboard() {
     const container = document.getElementById('analysis-content');
     if (!container) return;
-    const items = _filteredAnnotations();
+    // One roll-up decision, applied once, so no two cards can disagree about
+    // what a theme is.
+    const items = _rollupItems(_filteredAnnotations());
     container.innerHTML = `
+        <div class="analysis-toolbar">
+            <span class="analysis-toolbar-label">Themes</span>
+            <div class="analysis-rollup-toggle" role="group" aria-label="Theme level">
+                <button class="analysis-rollup-btn${_analysisRollup === 'leaf' ? ' active' : ''}" type="button"
+                        onclick="setAnalysisRollup('leaf')" title="Count themes exactly as coded">As coded</button>
+                <button class="analysis-rollup-btn${_analysisRollup === 'root' ? ' active' : ''}" type="button"
+                        onclick="setAnalysisRollup('root')" title="Fold each theme into its top-level parent">Top level</button>
+            </div>
+            <small class="analysis-toolbar-hint">${_analysisRollup === 'root'
+                ? 'every theme counted under its top-level parent'
+                : 'sub-themes counted separately from their parent'}</small>
+        </div>
         <div class="analysis-grid">
             <div class="analysis-card">${_chartThemeFrequency(items)}</div>
             <div class="analysis-card">${_chartAnnotationType(items)}</div>
@@ -2539,7 +2557,8 @@ function _chartThemeFrequency(items, options = {}) {
         if (!counts[t.tag_id]) counts[t.tag_id] = { name: t.name, color: t.color, count: 0 };
         counts[t.tag_id].count++;
     }));
-    const sorted = Object.values(counts).sort((a, b) => b.count - a.count).slice(0, 15);
+    const all = Object.values(counts).sort((a, b) => b.count - a.count);
+    const sorted = all.slice(0, 15);
     if (!sorted.length) return `<div class="analysis-card-header"><span>Theme Frequency</span></div><p class="analysis-empty">No themed annotations yet.</p>`;
     const max = sorted[0].count;
     const exportBtn = options.project ? `<div class="analysis-export-actions">
@@ -2548,7 +2567,7 @@ function _chartThemeFrequency(items, options = {}) {
         <button class="analysis-export-chip" type="button" onclick="exportProjectThemeFrequencyPng()" title="Download as PNG">${icon('image')} PNG</button>
     </div>` : '';
     return `
-        <div class="analysis-card-header"><span>${icon('git-branch')} Theme Frequency</span>${exportBtn}</div>
+        <div class="analysis-card-header"><span>${icon('git-branch')} Theme Frequency</span>${_analysisRollupNote()}${_shownOf(sorted.length, all.length, 'themes')}${exportBtn}</div>
         <div class="analysis-bars">${sorted.map(t => `
             <div class="analysis-bar-row">
                 <span class="analysis-bar-label" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</span>
@@ -2602,7 +2621,124 @@ function _chartAnnotationType(items) {
         </div>`;
 }
 
-const _STOPWORDS = new Set(['the','a','an','and','or','but','in','on','at','to','for','of','with','by','from','as','is','was','are','were','be','been','have','has','had','do','does','did','will','would','could','should','may','might','this','that','these','those','it','its','they','their','there','then','than','when','where','which','who','what','how','not','also','can','all','one','two','we','you','he','she','our','his','her','my','some','no','if','so','more','into','through','during','before','after','up','out','over','just','about','very','such','each','both','other','here','between','however','therefore','thus','while','among','upon']);
+/* ── Shared analysis helpers ─────────────────────────────────────────────────
+   Text handling and codebook handling used by every card, kept in one place so
+   the dashboard cannot disagree with itself about what a "theme" or a "word"
+   is.                                                                        */
+
+const _STOPWORDS_EN = new Set(['the','a','an','and','or','but','in','on','at','to','for','of','with','by','from','as','is','was','are','were','be','been','have','has','had','do','does','did','will','would','could','should','may','might','this','that','these','those','it','its','they','their','there','then','than','when','where','which','who','what','how','not','also','can','all','one','two','we','you','he','she','our','his','her','my','some','no','if','so','more','into','through','during','before','after','up','out','over','just','about','very','such','each','both','other','here','between','however','therefore','thus','while','among','upon']);
+
+// Indonesian function words. Without these the word-frequency and TF-IDF cards
+// on an Indonesian corpus rank "yang", "dan" and "dengan" as its main themes.
+const _STOPWORDS_ID = new Set(['yang','dan','untuk','dengan','pada','adalah','ini','itu','atau','tidak','akan','telah','oleh','dalam','juga','sebagai','karena','dapat','lebih','sudah','bisa','saya','kami','kita','mereka','ada','agar','antara','apa','atas','bagi','bahwa','banyak','baru','beberapa','begitu','belum','benar','berada','berbagai','berikut','bila','bukan','dahulu','demikian','hanya','harus','hingga','ialah','ingin','jadi','jika','kalau','kemudian','ketika','lain','lalu','maka','masih','maupun','melalui','memang','mungkin','namun','pula','saat','saja','sama','sangat','sebuah','sedang','sehingga','sejak','selain','selama','semua','seperti','serta','setelah','sini','situ','suatu','supaya','tanpa','tapi','tentang','terhadap','tersebut','tetapi','tiap','walau','yaitu','yakni']);
+
+const _STOPWORDS = new Set([..._STOPWORDS_EN, ..._STOPWORDS_ID]);
+
+// Scripts that do not separate words with spaces need shorter minimum tokens —
+// a two-character Han compound is a word, "th" is not.
+const _CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+let _wordSegmenter = null;
+
+/* Tokeniser for every text card.  The previous `[a-z]{3,}` matched ASCII only:
+   it returned nothing at all for Arabic, Chinese or Cyrillic sources, and cut
+   accented Latin into fragments ("café" → "caf").  Intl.Segmenter handles both,
+   including scripts without spaces; the regex is a fallback for engines
+   without it. */
+function _tokenize(text) {
+    if (!text) return [];
+    const lower = String(text).toLowerCase();
+    if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+        if (!_wordSegmenter) _wordSegmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+        const out = [];
+        for (const seg of _wordSegmenter.segment(lower)) {
+            if (!seg.isWordLike) continue;
+            const w = seg.segment;
+            if (w.length >= (_CJK_RE.test(w) ? 2 : 3)) out.push(w);
+        }
+        return out;
+    }
+    return lower.match(/\p{L}{3,}/gu) || [];
+}
+
+function _contentWords(text) {
+    return _tokenize(text).filter(w => !_STOPWORDS.has(w));
+}
+
+/* ── Codebook roll-up ────────────────────────────────────────────────────────
+   Themes are a tree, and coding normally happens at the leaves.  Counting the
+   leaves alone hides the branch: a parent holding 30 annotations across three
+   children rendered no bar at all, because no annotation carried the parent's
+   own id.  'root' folds every theme into its top-level ancestor before any card
+   sees it, which also collapses parent+child coded on one annotation into a
+   single theme rather than reporting them as co-occurring.                   */
+
+let _analysisRollup = 'leaf';   // 'leaf' = as coded · 'root' = top-level themes
+
+function _rootTagIndex() {
+    const byId = new Map();
+    (appState.allTags || []).forEach(t => byId.set(t.tag_id, t));
+    const rootOf = new Map();
+    byId.forEach(tag => {
+        const chain = [];
+        let node = tag;
+        let guard = 0;
+        while (node && !rootOf.has(node.tag_id) && guard++ < 64) {
+            chain.push(node.tag_id);
+            const parent = node.parent_id != null ? byId.get(node.parent_id) : null;
+            if (!parent) break;
+            node = parent;
+        }
+        const root = rootOf.get(node?.tag_id) || node || tag;
+        chain.forEach(id => rootOf.set(id, root));
+    });
+    return rootOf;
+}
+
+function _rollupItems(items) {
+    if (_analysisRollup !== 'root') return items;
+    const rootOf = _rootTagIndex();
+    if (!rootOf.size) return items;   // codebook not loaded — leave data untouched
+    return items.map(a => {
+        const merged = new Map();
+        (a.tags || []).forEach(t => {
+            const root = rootOf.get(t.tag_id);
+            const eff = root || t;    // unknown theme: keep exactly as coded
+            if (!merged.has(eff.tag_id)) {
+                merged.set(eff.tag_id, { tag_id: eff.tag_id, name: eff.name, color: eff.color || t.color });
+            }
+        });
+        return { ...a, tags: [...merged.values()] };
+    });
+}
+
+// Rolls a raw tag id up to the id the dashboard is currently counting it under.
+function _rollupTagId(tagId, rootOf) {
+    if (_analysisRollup !== 'root' || !rootOf?.size) return tagId;
+    return rootOf.get(tagId)?.tag_id ?? tagId;
+}
+
+function setAnalysisRollup(mode) {
+    _analysisRollup = mode === 'root' ? 'root' : 'leaf';
+    appState._irrData = null;   // κ was computed at the other level
+    if (appState.activeCenterView === 'annotations') renderAnalysisDashboard();
+    if (appState.activeProject) renderProjectDetail(appState.activeProject);
+}
+
+/* "showing 15 of 60" — every card that truncates now says so. */
+function _shownOf(shown, total, noun) {
+    return shown < total ? `<small class="analysis-trunc">showing top ${shown} of ${total} ${noun}</small>` : '';
+}
+
+/* Force-directed layout is O(n²) per iteration × 220 iterations, synchronous.
+   Past ~60 nodes the picture is unreadable long before it is slow, so cap it. */
+const NETWORK_NODE_LIMIT = 60;
+
+// Marks cards whose counts are aggregated to parent themes, so an exported
+// report cannot be read as leaf-level coding.
+function _analysisRollupNote() {
+    return _analysisRollup === 'root'
+        ? '<small class="analysis-rollup-note">rolled up to top-level themes</small>' : '';
+}
 
 let _wfMode = 'bars'; // 'bars' | 'cloud' | 'rank'
 let _wfCache = null;
@@ -2622,10 +2758,12 @@ function _setProjWfMode(mode) {
 function _chartProjWordFrequency(items) {
     const wc = {};
     items.forEach(a => {
-        ((a.quote || '') + ' ' + (a.comment || '')).toLowerCase()
-            .match(/[a-z]{3,}/g)?.forEach(w => { if (!_STOPWORDS.has(w)) wc[w] = (wc[w] || 0) + 1; });
+        _contentWords((a.quote || '') + ' ' + (a.comment || ''))
+            .forEach(w => { wc[w] = (wc[w] || 0) + 1; });
     });
+    const distinct = Object.keys(wc).length;
     const sorted = Object.entries(wc).sort((a, b) => b[1] - a[1]).slice(0, 30);
+    sorted.totalWords = distinct;
     if (!sorted.length) return `<div class="analysis-card-header"><span>${icon('type')} Word Frequency</span></div><p class="analysis-empty">No text to analyse yet.</p>`;
     const max = sorted[0][1];
     _projWfCache = { sorted, max };
@@ -2636,7 +2774,7 @@ function _renderProjWf(sorted, max) {
     const header = `
         <div class="analysis-card-header">
             <span>${icon('type')} Word Frequency</span>
-            <small>top words in quotes &amp; notes</small>
+            <small>words in quotes &amp; notes${sorted.totalWords ? ` · showing ${_wfShownCount(sorted, _projWfMode)} of ${sorted.totalWords} distinct` : ''}</small>
             <div class="wf-mode-toggle">
                 <button class="wf-mode-btn${_projWfMode==='bars'?' active':''}" onclick="_setProjWfMode('bars')" title="Bar chart">${icon('bar-chart-2')}</button>
                 <button class="wf-mode-btn${_projWfMode==='cloud'?' active':''}" onclick="_setProjWfMode('cloud')" title="Word cloud">${icon('wind')}</button>
@@ -2660,21 +2798,30 @@ function _setWfMode(mode) {
 function _chartWordFrequency(items) {
     const wc = {};
     items.forEach(a => {
-        ((a.quote || '') + ' ' + (a.comment || '')).toLowerCase()
-            .match(/[a-z]{3,}/g)?.forEach(w => { if (!_STOPWORDS.has(w)) wc[w] = (wc[w] || 0) + 1; });
+        _contentWords((a.quote || '') + ' ' + (a.comment || ''))
+            .forEach(w => { wc[w] = (wc[w] || 0) + 1; });
     });
+    const distinct = Object.keys(wc).length;
     const sorted = Object.entries(wc).sort((a, b) => b[1] - a[1]).slice(0, 30);
+    sorted.totalWords = distinct;
     if (!sorted.length) return `<div class="analysis-card-header"><span>${icon('type')} Word Frequency</span></div><p class="analysis-empty">No text to analyse yet.</p>`;
     const max = sorted[0][1];
     _wfCache = { sorted, max };
     return _renderWf(sorted, max);
 }
 
+// Each view truncates differently; report the count actually on screen.
+function _wfShownCount(sorted, mode) {
+    if (mode === 'cloud') return sorted.length;
+    if (mode === 'treemap') return Math.min(25, sorted.length);
+    return Math.min(20, sorted.length);
+}
+
 function _renderWf(sorted, max) {
     const header = `
         <div class="analysis-card-header">
             <span>${icon('type')} Word Frequency</span>
-            <small>top words in quotes &amp; notes</small>
+            <small>words in quotes &amp; notes${sorted.totalWords ? ` · showing ${_wfShownCount(sorted, _wfMode)} of ${sorted.totalWords} distinct` : ''}</small>
             <div class="wf-mode-toggle">
                 <button class="wf-mode-btn${_wfMode==='bars'?' active':''}" onclick="_setWfMode('bars')" title="Bar chart">${icon('bar-chart-2')}</button>
                 <button class="wf-mode-btn${_wfMode==='cloud'?' active':''}" onclick="_setWfMode('cloud')" title="Word cloud">${icon('wind')}</button>
@@ -2732,11 +2879,12 @@ function _chartCoOccurrence(items) {
             pairs[key].count++;
         }
     });
-    const sorted = Object.values(pairs).sort((a, b) => b.count - a.count).slice(0, 12);
+    const allPairs = Object.values(pairs).sort((a, b) => b.count - a.count);
+    const sorted = allPairs.slice(0, 12);
     if (!sorted.length) return `<div class="analysis-card-header"><span>Theme Co-occurrence</span></div><p class="analysis-empty">Tag multiple themes on the same annotation to see co-occurring pairs.</p>`;
     const max = sorted[0].count;
     return `
-        <div class="analysis-card-header"><span>${icon('git-merge')} Theme Co-occurrence</span><small>themes appearing on the same annotation</small></div>
+        <div class="analysis-card-header"><span>${icon('git-merge')} Theme Co-occurrence</span><small>themes appearing on the same annotation</small>${_analysisRollupNote()}${_shownOf(sorted.length, allPairs.length, 'pairs')}</div>
         <div class="analysis-bars analysis-bars-2col">${sorted.map(p => `
             <div class="analysis-bar-row">
                 <span class="analysis-cooc-label">
@@ -2758,10 +2906,22 @@ function _chartDocumentMatrix(items, options = {}) {
         if (!themeCounts[t.tag_id]) themeCounts[t.tag_id] = { ...t, c: 0 };
         themeCounts[t.tag_id].c++;
     }));
-    const topThemes = Object.values(themeCounts).sort((a, b) => b.c - a.c).slice(0, 10);
+    const allThemes = Object.values(themeCounts).sort((a, b) => b.c - a.c);
+    const topThemes = allThemes.slice(0, 10);
+
+    /* Documents were previously the *first* eight encountered.  The API returns
+       annotations ordered by item_key, so that was the eight lexicographically
+       smallest keys — a stable but meaningless subset that could omit the
+       documents holding almost all of the coding.  Rank them by how much coding
+       they actually carry. */
     const docsMap = {};
-    items.forEach(a => { if (!docsMap[a.item_key]) docsMap[a.item_key] = a.item_title || a.item_key; });
-    const topDocs = Object.entries(docsMap).slice(0, 8);
+    const docCounts = {};
+    items.forEach(a => {
+        if (!docsMap[a.item_key]) docsMap[a.item_key] = a.item_title || a.item_key;
+        docCounts[a.item_key] = (docCounts[a.item_key] || 0) + 1;
+    });
+    const allDocs = Object.entries(docsMap).sort((a, b) => (docCounts[b[0]] || 0) - (docCounts[a[0]] || 0));
+    const topDocs = allDocs.slice(0, 8);
     if (!topThemes.length || !topDocs.length) return `<div class="analysis-card-header"><span>Theme × Document Matrix</span></div><p class="analysis-empty">Not enough data.</p>`;
 
     const matrix = {};
@@ -2778,7 +2938,10 @@ function _chartDocumentMatrix(items, options = {}) {
         <button class="analysis-export-chip" type="button" onclick="exportProjectDocumentMatrixPng()" title="Download as PNG">${icon('image')} PNG</button>
     </div>` : '';
     return `
-        <div class="analysis-card-header"><span>${icon('grid')} Theme × Document Matrix</span><small>annotation count per theme per paper</small>${exportBtnMatrix}</div>
+        <div class="analysis-card-header"><span>${icon('grid')} Theme × Document Matrix</span><small>annotation count per theme per paper · most-coded first${
+            (topThemes.length < allThemes.length || topDocs.length < allDocs.length)
+                ? ` · showing ${topThemes.length}/${allThemes.length} themes × ${topDocs.length}/${allDocs.length} documents` : ''
+        }</small>${exportBtnMatrix}</div>
         <div class="heatmap-scroll">
             <table class="heatmap-table">
                 <thead><tr>
@@ -2805,16 +2968,28 @@ function _chartDocumentMatrix(items, options = {}) {
 /* ── New analysis charts ─────────────────────────────────────────────────────── */
 
 function _chartAnnotationsOverTime(items) {
+    /* Calendar months only meant a three-week coding sprint — however intense —
+       fell into one bucket and the card rendered "Not enough dated annotations
+       yet". Pick the bucket from the span actually covered. */
+    const dates = items.map(a => (a.created_at ? new Date(a.created_at) : null))
+        .filter(d => d && !isNaN(d));
+    if (dates.length < 2) return `<div class="analysis-card-header"><span>${icon('trending-up')} Annotations Over Time</span></div><p class="analysis-empty">Not enough dated annotations yet.</p>`;
+
+    const spanDays = (Math.max(...dates) - Math.min(...dates)) / 86400000;
+    const grain = spanDays <= 21 ? 'day' : spanDays <= 120 ? 'week' : 'month';
+    const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const bucketOf = d => {
+        if (grain === 'month') return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        if (grain === 'day') return iso(d);
+        const wk = new Date(d);                        // week starting Monday
+        wk.setDate(wk.getDate() - ((wk.getDay() + 6) % 7));
+        return iso(wk);
+    };
+
     const byMonth = {};
-    items.forEach(a => {
-        if (!a.created_at) return;
-        const d = new Date(a.created_at);
-        if (isNaN(d)) return;
-        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-        byMonth[key] = (byMonth[key] || 0) + 1;
-    });
+    dates.forEach(d => { const k = bucketOf(d); byMonth[k] = (byMonth[k] || 0) + 1; });
     const sorted = Object.entries(byMonth).sort((a,b) => a[0].localeCompare(b[0]));
-    if (sorted.length < 2) return `<div class="analysis-card-header"><span>${icon('trending-up')} Annotations Over Time</span></div><p class="analysis-empty">Not enough dated annotations yet.</p>`;
+    if (sorted.length < 2) return `<div class="analysis-card-header"><span>${icon('trending-up')} Annotations Over Time</span></div><p class="analysis-empty">All annotations fall on the same ${grain}.</p>`;
 
     const max = Math.max(...sorted.map(([,v]) => v));
     const bw = Math.max(18, Math.min(48, Math.floor(560 / sorted.length)));
@@ -2824,20 +2999,21 @@ function _chartAnnotationsOverTime(items) {
     const bars = sorted.map(([month, count], i) => {
         const h = Math.round(count / max * ch);
         const x = i * (bw + gap);
-        const lbl = month.slice(5); // MM
-        const yr = month.slice(2,4); // YY
+        // month keys are YYYY-MM, day/week keys are YYYY-MM-DD
+        const lbl = grain === 'month' ? month.slice(5) : `${month.slice(8)}/${month.slice(5, 7)}`;
+        const yr = month.slice(2, 4); // YY
         return `<g>
             <rect x="${x}" y="${ch - h}" width="${bw}" height="${h}" fill="var(--accent)" rx="3" opacity="0.85">
                 <title>${month}: ${count} annotations</title>
             </rect>
             <text x="${x + bw/2}" y="${ch + 13}" text-anchor="middle" font-size="9" fill="var(--text-muted)">${lbl}</text>
-            ${lbl === '01' ? `<text x="${x + bw/2}" y="${ch + 22}" text-anchor="middle" font-size="8" fill="var(--text-muted)" opacity="0.7">${yr}</text>` : ''}
+            ${(grain === 'month' && lbl === '01') || i === 0 ? `<text x="${x + bw/2}" y="${ch + 22}" text-anchor="middle" font-size="8" fill="var(--text-muted)" opacity="0.7">${yr}</text>` : ''}
             <text x="${x + bw/2}" y="${ch - h - 3}" text-anchor="middle" font-size="9" fill="var(--text-secondary)">${count > 0 ? count : ''}</text>
         </g>`;
     }).join('');
 
     return `
-        <div class="analysis-card-header"><span>${icon('trending-up')} Annotations Over Time</span><small>by month</small></div>
+        <div class="analysis-card-header"><span>${icon('trending-up')} Annotations Over Time</span><small>by ${grain} · ${sorted.length} buckets</small></div>
         <div style="overflow-x:auto">
             <svg viewBox="0 0 ${svgW} ${ch + 28}" style="display:block;min-width:${svgW}px;height:${ch+28}px;width:100%">
                 ${bars}
@@ -2881,6 +3057,7 @@ function _chartThemeNetwork(items) {
         <div class="analysis-card-header">
             <span>${icon('share-2')} Theme Relationship Network</span>
             <small>node size = frequency · edge = co-occurrence</small>
+            ${_analysisRollupNote()}<small class="analysis-trunc" id="network-cap-note"></small>
         </div>
         <div class="network-controls">
             <div class="network-ctrl-group">
@@ -2918,6 +3095,7 @@ function _chartProjectNetworkHtml() {
         <div class="analysis-card-header">
             <span>${icon('share-2')} Theme Relationship Network</span>
             <small>node size = frequency · edge = co-occurrence</small>
+            ${_analysisRollupNote()}<small class="analysis-trunc" id="proj-network-cap-note"></small>
             <div class="analysis-export-actions">
                 <button class="analysis-export-chip" type="button" onclick="exportProjectNetworkData()" title="Download network nodes and edges as CSV">${icon('table-2')} Data</button>
                 <button class="analysis-export-chip" type="button" onclick="exportProjectNetworkPng()" title="Download current network view as PNG">${icon('image')} PNG</button>
@@ -3000,9 +3178,25 @@ function _initNetworkGraph(items, canvasId = 'network-canvas', emptyId = 'networ
         const [s, t] = k.split('-').map(Number);
         return { s, t, w };
     });
-    const nodes = Object.values(nodemap);
+    /* The layout is a 220-iteration O(n²) simulation run synchronously on the
+       main thread, and it used every theme in the corpus: 200 themes measured
+       ~500 ms, 400 themes ~2 s, every time the dashboard re-rendered.  Cap it at
+       the most-used themes — beyond that the graph is unreadable anyway — and
+       drop edges that lost an endpoint. */
+    const allNodes = Object.values(nodemap).sort((a, b) => b.count - a.count);
+    const nodes = allNodes.slice(0, NETWORK_NODE_LIMIT);
+    const kept = new Set(nodes.map(n => n.id));
+    const edges = edgeList.filter(e => kept.has(e.s) && kept.has(e.t));
+    const hiddenNodes = allNodes.length - nodes.length;
 
-    if (nodes.length < 2 || edgeList.length === 0) {
+    const capNote = document.getElementById(canvasId === 'network-canvas' ? 'network-cap-note' : 'proj-network-cap-note');
+    if (capNote) {
+        capNote.textContent = hiddenNodes
+            ? `showing the ${nodes.length} most-used of ${allNodes.length} themes`
+            : '';
+    }
+
+    if (nodes.length < 2 || edges.length === 0) {
         canvas.style.display = 'none';
         const emptyEl = document.getElementById(emptyId);
         if (emptyEl) emptyEl.style.display = '';
@@ -3018,7 +3212,7 @@ function _initNetworkGraph(items, canvasId = 'network-canvas', emptyId = 'networ
         n.y = H/2 + (Math.random() - 0.5) * H * 0.55;
         n.vx = 0; n.vy = 0;
     });
-    const maxW = Math.max(...edgeList.map(e => e.w));
+    const maxW = Math.max(...edges.map(e => e.w));
     const idxMap = {};
     nodes.forEach((n, i) => idxMap[n.id] = i);
 
@@ -3032,7 +3226,7 @@ function _initNetworkGraph(items, canvasId = 'network-canvas', emptyId = 'networ
             nodes[i].vx -= dx/d*f; nodes[i].vy -= dy/d*f;
             nodes[j].vx += dx/d*f; nodes[j].vy += dy/d*f;
         }
-        edgeList.forEach(e => {
+        edges.forEach(e => {
             const a = nodes[idxMap[e.s]], b = nodes[idxMap[e.t]];
             if (!a || !b) return;
             const dx = b.x - a.x, dy = b.y - a.y;
@@ -3060,7 +3254,7 @@ function _initNetworkGraph(items, canvasId = 'network-canvas', emptyId = 'networ
     nodes.forEach(n => { n.x += ox; n.y += oy; });
 
     _netState = {
-        canvas, nodes, edgeList, idxMap, maxW,
+        canvas, nodes, edgeList: edges, idxMap, maxW,
         W, H,
         edgeStyle: 'straight',
         edgeDash: 'solid',
@@ -3289,6 +3483,9 @@ function _netZoomFit() {
     _netDraw();
 }
 
+// Rows rendered at once; every match is still counted and reported.
+const KWIC_RESULT_LIMIT = 200;
+
 function _chartKWIC() {
     return `
         <div class="analysis-card-header"><span>${icon('search')} Keyword in Context (KWIC)</span><small>find a word across all annotations</small></div>
@@ -3302,31 +3499,43 @@ function renderKWICResults(query) {
     const q = query.trim().toLowerCase();
     if (q.length < 2) { container.innerHTML = '<p class="analysis-empty">Type at least 2 characters.</p>'; return; }
 
-    const items = _filteredAnnotations();
+    // Rolled up like every other card, so the theme chips beside each line match
+    // the level the rest of the dashboard is counting at.
+    const items = _rollupItems(_filteredAnnotations());
     const results = [];
-    items.forEach(a => {
+    let total = 0;
+
+    /* The cap used to be `if (results.length >= 40) return;` inside a forEach —
+       where `return` skips to the next annotation instead of stopping, so every
+       remaining annotation still contributed one more hit.  The count shown was
+       therefore neither the true total nor the cap (75 real matches displayed
+       as "51").  Count every match, collect up to the limit, and say which is
+       which. */
+    for (const a of items) {
         const text = (a.quote || '') + (a.comment ? '\n' + a.comment : '');
         const lower = text.toLowerCase();
         let pos = 0;
         while ((pos = lower.indexOf(q, pos)) !== -1) {
-            const start = Math.max(0, pos - 45);
-            const end = Math.min(text.length, pos + q.length + 45);
-            results.push({
-                a,
-                before: (start > 0 ? '…' : '') + text.slice(start, pos),
-                match: text.slice(pos, pos + q.length),
-                after: text.slice(pos + q.length, end) + (end < text.length ? '…' : ''),
-            });
+            total++;
+            if (results.length < KWIC_RESULT_LIMIT) {
+                const start = Math.max(0, pos - 45);
+                const end = Math.min(text.length, pos + q.length + 45);
+                results.push({
+                    a,
+                    before: (start > 0 ? '…' : '') + text.slice(start, pos),
+                    match: text.slice(pos, pos + q.length),
+                    after: text.slice(pos + q.length, end) + (end < text.length ? '…' : ''),
+                });
+            }
             pos += q.length;
-            if (results.length >= 40) break;
         }
-        if (results.length >= 40) return;
-    });
+    }
 
-    if (!results.length) { container.innerHTML = `<p class="analysis-empty">No matches for "<strong>${escapeHtml(q)}</strong>".</p>`; return; }
+    if (!total) { container.innerHTML = `<p class="analysis-empty">No matches for "<strong>${escapeHtml(q)}</strong>".</p>`; return; }
 
     container.innerHTML = `
-        <div class="kwic-count">${results.length} match${results.length!==1?'es':''}</div>
+        <div class="kwic-count">${total} match${total !== 1 ? 'es' : ''}${
+            results.length < total ? ` · showing the first ${results.length}` : ''}</div>
         <div class="kwic-table">
             ${results.map(r => `
                 <div class="kwic-row">
@@ -3344,7 +3553,15 @@ const _NEG_WORDS = new Set(['problem','problems','issue','issues','limitation','
 
 function _chartSaturation(items, options = {}) {
     if (!items.length) return `<div class="analysis-card-header"><span>${icon('activity')} Theme Saturation Curve</span></div><p class="analysis-empty">No annotations yet.</p>`;
-    const sorted = [...items].sort((a, b) => a.annotation_id - b.annotation_id);
+    /* Coding order, best available: created_at when the annotation carries it,
+       falling back to the autoincrement id.  Ids alone mis-order any corpus
+       that was bulk-imported, because they are assigned at import time rather
+       than in the order the researcher actually read. */
+    const orderKey = a => {
+        const t = a.created_at ? Date.parse(a.created_at) : NaN;
+        return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER;
+    };
+    const sorted = [...items].sort((a, b) => (orderKey(a) - orderKey(b)) || (a.annotation_id - b.annotation_id));
     const seen = new Set();
     const data = sorted.map((a, i) => {
         (a.tags || []).forEach(t => seen.add(t.tag_id));
@@ -3355,7 +3572,17 @@ function _chartSaturation(items, options = {}) {
 
     let lastNew = 0, prev = 0;
     data.forEach((d, i) => { if (d.total > prev) { lastNew = i; prev = d.total; } });
-    const isSat = lastNew < data.length - 1;
+
+    /* Saturation needs a *run* of annotations that added nothing new.  The old
+       test was `lastNew < data.length - 1`, i.e. one single trailing annotation
+       with no new theme flipped the verdict to "Saturated" — which it then
+       reported as a confident percentage.  Require a tail of at least 10% of
+       the corpus (minimum 5 annotations), and refuse to judge a corpus too
+       small to say anything about. */
+    const sinceLastNew = data.length - 1 - lastNew;
+    const window = Math.max(5, Math.ceil(data.length * 0.1));
+    const tooSmall = data.length < 15;
+    const isSat = !tooSmall && sinceLastNew >= window;
 
     const W = 520, H = 110, PL = 28, PR = 6, PT = 10, PB = 18;
     const cW = W - PL - PR, cH = H - PT - PB;
@@ -3395,7 +3622,7 @@ function _chartSaturation(items, options = {}) {
     return `
         <div class="analysis-card-header">
             <span>${icon('activity')} Theme Saturation Curve</span>
-            <small>new themes per annotation · curve flattening = data saturation reached</small>
+            <small>cumulative new themes in coding order · saturation = no new theme for ${window}+ consecutive annotations</small>${_analysisRollupNote()}
             ${exportActions}
         </div>
         <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
@@ -3408,9 +3635,14 @@ function _chartSaturation(items, options = {}) {
             <text x="${(W + PL - PR) / 2}" y="${H - 2}" text-anchor="middle" font-size="8" fill="${cMuted}">annotation #</text>
         </svg></div>
         <div class="saturation-stats">
-            <div class="saturation-stat"><span>${maxT}</span><small>total themes used</small></div>
+            <div class="saturation-stat"><span>${maxT}</span><small>${_analysisRollup === 'root' ? 'top-level themes used' : 'themes used (as coded)'}</small></div>
             <div class="saturation-stat"><span>#${lastNew + 1} / ${data.length}</span><small>last new theme introduced at</small></div>
-            <div class="saturation-stat"><span style="color:${isSat ? '#22c55e' : 'var(--accent)'}">${isSat ? 'Saturated' : 'In progress'}</span><small>${isSat ? `after ${((lastNew + 1) / data.length * 100).toFixed(0)}% of annotations` : 'still adding new themes'}</small></div>
+            <div class="saturation-stat"><span>${sinceLastNew}</span><small>annotations since, criterion &ge; ${window}</small></div>
+            <div class="saturation-stat"><span style="color:${tooSmall ? 'var(--text-muted)' : isSat ? '#22c55e' : 'var(--accent)'}">${
+                tooSmall ? 'Too early' : isSat ? 'Saturated' : 'In progress'}</span><small>${
+                tooSmall ? `need ≥ 15 annotations to judge (have ${data.length})`
+                : isSat ? `no new theme in the last ${sinceLastNew} annotations`
+                : `${window - sinceLastNew} more without a new theme to qualify`}</small></div>
         </div>`;
 }
 
@@ -3419,14 +3651,16 @@ function _chartSentiment(items, options = {}) {
     let manualCount = 0;
     const tagged = items.map(a => {
         if (a.sentiment) { manualCount++; return { ...a, _sent: a.sentiment, _manual: true }; }
-        const words = ((a.quote || '') + ' ' + (a.comment || '')).toLowerCase().match(/[a-z]{3,}/g) || [];
+        const words = _tokenize((a.quote || '') + ' ' + (a.comment || ''));
         let score = 0;
         words.forEach(w => { if (_POS_WORDS.has(w)) score++; if (_NEG_WORDS.has(w)) score--; });
         return { ...a, _sent: score > 0 ? 'pos' : score < 0 ? 'neg' : 'neu', _manual: false };
     });
+    // The inferred score reads the quote and your note together, so a critical
+    // note ("weak evidence") makes the passage itself look negative. Say so.
     const sourceNote = manualCount > 0
-        ? `${manualCount} manually flagged · ${items.length - manualCount} keyword-inferred`
-        : 'keyword-based scoring — flag annotations manually for accuracy';
+        ? `${manualCount} manually flagged · ${items.length - manualCount} inferred from English keywords in quote + note`
+        : 'inferred from English keywords in quote + note — flag annotations manually for accuracy';
     const pos = tagged.filter(a => a._sent === 'pos').length;
     const neg = tagged.filter(a => a._sent === 'neg').length;
     const neu = tagged.filter(a => a._sent === 'neu').length;
@@ -3442,7 +3676,8 @@ function _chartSentiment(items, options = {}) {
         if (!themeScores[t.tag_id]) themeScores[t.tag_id] = { ...t, pos: 0, neg: 0, neu: 0, total: 0 };
         themeScores[t.tag_id][a._sent]++; themeScores[t.tag_id].total++;
     }));
-    const themes = Object.values(themeScores).sort((a, b) => b.total - a.total).slice(0, 8);
+    const allSentimentThemes = Object.values(themeScores).sort((a, b) => b.total - a.total);
+    const themes = allSentimentThemes.slice(0, 8);
 
     const cBgTertiary = _cssVar('--bg-tertiary', '#162d5a');
     const exportBtnSentiment = (typeof options !== 'undefined' && options.project) ? `<div class="analysis-export-actions">
@@ -3471,7 +3706,7 @@ function _chartSentiment(items, options = {}) {
                 </div>
             </div>
             ${themes.length ? `<div class="sentiment-theme-list">
-                <div class="sentiment-theme-header"><small>Per-theme sentiment</small></div>
+                <div class="sentiment-theme-header"><small>Per-theme sentiment</small>${_analysisRollupNote()}${_shownOf(themes.length, allSentimentThemes.length, 'themes')}</div>
                 ${themes.map(t => {
                     const pw = (t.pos / t.total * 100).toFixed(0);
                     const nw = (t.neg / t.total * 100).toFixed(0);
@@ -3493,18 +3728,28 @@ function _chartSentiment(items, options = {}) {
 function _chartTFIDF(items, options = {}) {
     const themeCorpus = {};
     items.forEach(a => {
-        const text = ((a.quote || '') + ' ' + (a.comment || '')).toLowerCase();
+        const words = _contentWords((a.quote || '') + ' ' + (a.comment || ''));
         (a.tags || []).forEach(t => {
             if (!themeCorpus[t.tag_id]) themeCorpus[t.tag_id] = { ...t, words: [] };
-            themeCorpus[t.tag_id].words.push(...(text.match(/[a-z]{3,}/g) || []).filter(w => !_STOPWORDS.has(w)));
+            themeCorpus[t.tag_id].words.push(...words);
         });
     });
-    const themes = Object.values(themeCorpus).filter(t => t.words.length >= 5).slice(0, 6);
-    if (!themes.length) return `<div class="analysis-card-header"><span>${icon('zap')} TF-IDF per Theme</span></div><p class="analysis-empty">Need at least 5 coded annotations across themes to compute TF-IDF.</p>`;
 
-    const N = themes.length;
+    /* Every theme with enough text forms the corpus the IDF is measured
+       against.  Selecting six *first* and computing IDF over only those made
+       "distinctive" mean "distinctive among an arbitrary six", and because
+       object keys that look like integers iterate numerically, that six was
+       whichever themes happened to have the lowest ids — not the largest.  Now
+       IDF spans the whole corpus and the six shown are simply the six with the
+       most coded text. */
+    const corpus = Object.values(themeCorpus).filter(t => t.words.length >= 5);
+    if (!corpus.length) return `<div class="analysis-card-header"><span>${icon('zap')} TF-IDF per Theme</span></div><p class="analysis-empty">Need at least 5 coded annotations across themes to compute TF-IDF.</p>`;
+
+    const N = corpus.length;
     const wordDocFreq = {};
-    themes.forEach(t => { new Set(t.words).forEach(w => { wordDocFreq[w] = (wordDocFreq[w] || 0) + 1; }); });
+    corpus.forEach(t => { new Set(t.words).forEach(w => { wordDocFreq[w] = (wordDocFreq[w] || 0) + 1; }); });
+
+    const themes = [...corpus].sort((a, b) => b.words.length - a.words.length).slice(0, 6);
 
     themes.forEach(t => {
         const tf = {};
@@ -3522,7 +3767,7 @@ function _chartTFIDF(items, options = {}) {
         <button class="analysis-export-chip" type="button" onclick="exportProjectTFIDFPng()" title="Download as PNG">${icon('image')} PNG</button>
     </div>` : '';
     return `
-        <div class="analysis-card-header"><span>${icon('zap')} TF-IDF per Theme</span><small>most distinctive words for each theme compared to the rest of the corpus</small>${exportBtnTFIDF}</div>
+        <div class="analysis-card-header"><span>${icon('zap')} TF-IDF per Theme</span><small>most distinctive words per theme, measured against all ${N} themes with enough text${themes.length < N ? ` · showing the ${themes.length} largest` : ''}</small>${exportBtnTFIDF}</div>
         <div class="tfidf-grid">
             ${themes.map(t => `
             <div class="tfidf-theme-block">
@@ -3562,11 +3807,24 @@ function computeIRR() {
         if (!text) throw new Error('Paste the second coder\'s JSON export first.');
         const raw = JSON.parse(text);
         if (!Array.isArray(raw)) throw new Error('Expected a JSON array.');
+        // Both coders are folded to the same level the dashboard is displaying,
+        // so κ answers the same question as the charts around it.
+        const rootOf = _analysisRollup === 'root' ? _rootTagIndex() : null;
         const coder2 = {};
-        raw.forEach(a => { coder2[a.annotation_id] = new Set((a.tags || []).map(t => t.tag_id)); });
-        const items = _filteredAnnotations();
+        raw.forEach(a => {
+            coder2[a.annotation_id] = new Set((a.tags || []).map(t => _rollupTagId(t.tag_id, rootOf)));
+        });
+        const items = _rollupItems(_filteredAnnotations());
         const shared = items.filter(a => coder2[a.annotation_id] !== undefined);
         if (shared.length < 5) throw new Error(`Only ${shared.length} matching annotations — need at least 5.`);
+
+        // Annotations one coder has and the other does not are disagreements
+        // about *what* to code, which κ cannot see. Report them rather than
+        // dropping them silently.
+        const mineOnly = items.length - shared.length;
+        const theirsOnly = Object.keys(coder2)
+            .filter(id => !items.some(a => String(a.annotation_id) === String(id))).length;
+
         const allTagIds = new Set();
         items.forEach(a => (a.tags || []).forEach(t => allTagIds.add(t.tag_id)));
         Object.values(coder2).forEach(tags => tags.forEach(id => allTagIds.add(id)));
@@ -3582,9 +3840,12 @@ function computeIRR() {
             const po = (a11 + a00) / n;
             const pe = ((a11 + a10) / n) * ((a11 + a01) / n) + ((a01 + a00) / n) * ((a10 + a00) / n);
             const kappa = pe >= 1 ? 1 : (po - pe) / (1 - pe);
-            return { tag, kappa, n1: a11 + a10, n2: a11 + a01 };
+            // Instances = annotations either coder assigned this code. It is the
+            // weight for the summary and the warning flag for unstable codes.
+            return { tag, kappa, n1: a11 + a10, n2: a11 + a01, instances: a11 + a10 + a01, agreed: a11 };
         }).filter(r => r.n1 > 0 || r.n2 > 0).sort((a, b) => b.kappa - a.kappa);
-        appState._irrData = { results, shared: shared.length };
+
+        appState._irrData = { results, shared: shared.length, mineOnly, theirsOnly, rollup: _analysisRollup };
         appState._irrError = null;
     } catch (e) {
         const msg = e instanceof SyntaxError ? 'Invalid JSON — make sure you paste the full export without modification.' : e.message;
@@ -3594,26 +3855,48 @@ function computeIRR() {
     renderAnalysisDashboard();
 }
 
-function _renderKappaResults({ results, shared }) {
-    const avg = results.length ? results.reduce((s, r) => s + r.kappa, 0) / results.length : 0;
-    const kappaColor = avg >= 0.8 ? '#22c55e' : avg >= 0.6 ? '#f59e0b' : avg >= 0.4 ? '#f97316' : '#ef4444';
-    const kappaLabel = avg >= 0.8 ? 'Almost perfect' : avg >= 0.6 ? 'Substantial' : avg >= 0.4 ? 'Moderate' : 'Fair / Slight';
+const IRR_MIN_INSTANCES = 10;   // below this a per-code κ is too unstable to read
+
+function _renderKappaResults({ results, shared, mineOnly = 0, theirsOnly = 0 }) {
+    /* The headline used to be a plain mean over codes, so a code applied to one
+       annotation moved it as much as a code applied to two hundred: perfect
+       agreement on 100 annotations plus one disputed rare code reported as
+       κ=0.495, "Moderate". Weight by how often each code was actually used, and
+       show the unweighted figure beside it rather than instead of it. */
+    const totalInstances = results.reduce((s, r) => s + r.instances, 0);
+    const weighted = totalInstances
+        ? results.reduce((s, r) => s + r.kappa * r.instances, 0) / totalInstances
+        : 0;
+    const unweighted = results.length ? results.reduce((s, r) => s + r.kappa, 0) / results.length : 0;
+    const band = k => k >= 0.8 ? ['#22c55e', 'Almost perfect']
+                    : k >= 0.6 ? ['#f59e0b', 'Substantial']
+                    : k >= 0.4 ? ['#f97316', 'Moderate']
+                    : ['#ef4444', 'Fair / Slight'];
+    const [kappaColor, kappaLabel] = band(weighted);
+    const thin = results.filter(r => r.instances < IRR_MIN_INSTANCES).length;
+    const shownRows = results.slice(0, 16);
+
     return `
         <div class="irr-summary">
-            <div class="irr-kappa-big" style="color:${kappaColor}">${avg.toFixed(3)}</div>
-            <div class="irr-kappa-meta">${kappaLabel} · ${shared} shared annotations
+            <div class="irr-kappa-big" style="color:${kappaColor}">${weighted.toFixed(3)}</div>
+            <div class="irr-kappa-meta">${kappaLabel} · prevalence-weighted across ${results.length} code${results.length !== 1 ? 's' : ''}
+                <br><small>unweighted mean κ ${unweighted.toFixed(3)} · ${shared} annotations coded by both</small>
+                ${(mineOnly || theirsOnly) ? `<br><small class="irr-warn">κ covers shared annotations only — ${mineOnly} of yours and ${theirsOnly} of theirs have no counterpart, so disagreement about <em>what</em> to code is not measured here.</small>` : ''}
+                ${thin ? `<br><small class="irr-warn">${thin} code${thin !== 1 ? 's' : ''} used fewer than ${IRR_MIN_INSTANCES} times — κ is unstable at that prevalence.</small>` : ''}
                 <button class="btn-secondary" style="font-size:0.75rem;padding:2px 8px;margin-left:12px" onclick="appState._irrData=null;renderAnalysisDashboard()">Reset</button>
             </div>
         </div>
+        ${_shownOf(shownRows.length, results.length, 'codes')}
         <div class="analysis-bars analysis-bars-2col" style="margin-top:10px">
-            ${results.slice(0, 16).map(r => {
-                const c = r.kappa >= 0.8 ? '#22c55e' : r.kappa >= 0.6 ? '#f59e0b' : r.kappa >= 0.4 ? '#f97316' : '#ef4444';
-                return `<div class="analysis-bar-row">
-                    <span class="analysis-bar-label" style="color:${r.tag.color || 'var(--accent)'}">${escapeHtml(r.tag.name)}</span>
+            ${shownRows.map(r => {
+                const [c] = band(r.kappa);
+                const unstable = r.instances < IRR_MIN_INSTANCES;
+                return `<div class="analysis-bar-row"${unstable ? ' title="Too few instances for a stable κ"' : ''}>
+                    <span class="analysis-bar-label" style="color:${r.tag.color || 'var(--accent)'}">${escapeHtml(r.tag.name)}${unstable ? ' <span class="irr-thin-flag">⚠</span>' : ''}</span>
                     <div class="analysis-bar-track">
-                        <div class="analysis-bar-fill" style="width:${(Math.max(0, r.kappa) * 100).toFixed(1)}%;background:${c}"></div>
+                        <div class="analysis-bar-fill" style="width:${(Math.max(0, r.kappa) * 100).toFixed(1)}%;background:${c};${unstable ? 'opacity:.45' : ''}"></div>
                     </div>
-                    <span class="analysis-bar-count" style="color:${c}">${r.kappa.toFixed(2)}</span>
+                    <span class="analysis-bar-count" style="color:${c}">${r.kappa.toFixed(2)}<small class="irr-n"> n=${r.instances}</small></span>
                 </div>`;
             }).join('')}
         </div>`;

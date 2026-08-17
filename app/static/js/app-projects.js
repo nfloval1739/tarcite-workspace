@@ -117,7 +117,8 @@ function renderProjectDetail(project) {
     refreshIcons(content);
     renderProjectSectionNav();
     if (appState.activeProjectSection === 'analysis') {
-        _initNetworkGraph(annotations, 'proj-network-canvas', 'proj-network-empty');
+        // Same roll-up as the cards it sits among.
+        _initNetworkGraph(_rollupItems(annotations), 'proj-network-canvas', 'proj-network-empty');
     }
     requestAnimationFrame(redrawInkLines);
 }
@@ -449,7 +450,13 @@ function renderProjectCodingReview(project, codebookTagIds = new Set()) {
 }
 
 function renderProjectAnalysis(project, codebookTagIds = new Set()) {
+    /* The KPI row measures the codebook as authored — how much of it has
+       evidence, what was coded outside it — so it must see the leaves exactly
+       as coded. Only the analytical cards below take the roll-up, otherwise
+       "codebook coverage" would collapse to the handful of root themes and
+       report a healthy codebook as almost entirely uncovered. */
     const annotations = project.annotations || [];
+    const chartItems = _rollupItems(annotations);
     const items = project.items || [];
     const codebookNodes = flattenProjectThemeNodes(project.theme_roots || []);
     const hasCodebook = codebookTagIds.size > 0;
@@ -473,6 +480,18 @@ function renderProjectAnalysis(project, codebookTagIds = new Set()) {
     const coveragePct = hasCodebook && codebookNodes.length ? Math.round((coveredCodebook / codebookNodes.length) * 100) : 0;
 
     return `
+        <div class="analysis-toolbar">
+            <span class="analysis-toolbar-label">Themes</span>
+            <div class="analysis-rollup-toggle" role="group" aria-label="Theme level">
+                <button class="analysis-rollup-btn${_analysisRollup === 'leaf' ? ' active' : ''}" type="button"
+                        onclick="setAnalysisRollup('leaf')" title="Count themes exactly as coded">As coded</button>
+                <button class="analysis-rollup-btn${_analysisRollup === 'root' ? ' active' : ''}" type="button"
+                        onclick="setAnalysisRollup('root')" title="Fold each theme into its top-level parent">Top level</button>
+            </div>
+            <small class="analysis-toolbar-hint">${_analysisRollup === 'root'
+                ? 'every theme counted under its top-level parent'
+                : 'sub-themes counted separately from their parent'}</small>
+        </div>
         <div class="project-analysis-summary">
             <div class="project-analysis-kpi" data-analysis-card="kpi-coding">
                 <strong>${projectCodingPct}%</strong>
@@ -504,17 +523,17 @@ function renderProjectAnalysis(project, codebookTagIds = new Set()) {
                     ? renderAnalysisMeter(coveragePct, `${coveredCodebook} of ${codebookNodes.length} project themes have evidence`)
                     : '<div class="project-muted">Attach root themes to measure codebook coverage.</div>'}
             </div>
-            <div class="analysis-card" data-analysis-card="theme-frequency">${_chartThemeFrequency(annotations, { project: true })}</div>
-            <div class="analysis-card" data-analysis-card="annotation-type">${_chartAnnotationType(annotations)}</div>
-            <div class="analysis-card analysis-card-wide" data-analysis-card="annotations-over-time">${_chartAnnotationsOverTime(annotations)}</div>
-            <div class="analysis-card analysis-card-wide" data-analysis-card="word-frequency" id="proj-wf-card">${_chartProjWordFrequency(annotations)}</div>
-            <div class="analysis-card analysis-card-wide" data-analysis-card="co-occurrence">${_chartCoOccurrence(annotations)}</div>
-            <div class="analysis-card analysis-card-wide" data-analysis-card="document-matrix">${_chartDocumentMatrix(annotations, { project: true })}</div>
-            <div class="analysis-card analysis-card-wide" data-analysis-card="coding-density">${_chartCodingDensity(annotations)}</div>
+            <div class="analysis-card" data-analysis-card="theme-frequency">${_chartThemeFrequency(chartItems, { project: true })}</div>
+            <div class="analysis-card" data-analysis-card="annotation-type">${_chartAnnotationType(chartItems)}</div>
+            <div class="analysis-card analysis-card-wide" data-analysis-card="annotations-over-time">${_chartAnnotationsOverTime(chartItems)}</div>
+            <div class="analysis-card analysis-card-wide" data-analysis-card="word-frequency" id="proj-wf-card">${_chartProjWordFrequency(chartItems)}</div>
+            <div class="analysis-card analysis-card-wide" data-analysis-card="co-occurrence">${_chartCoOccurrence(chartItems)}</div>
+            <div class="analysis-card analysis-card-wide" data-analysis-card="document-matrix">${_chartDocumentMatrix(chartItems, { project: true })}</div>
+            <div class="analysis-card analysis-card-wide" data-analysis-card="coding-density">${_chartCodingDensity(chartItems)}</div>
             <div class="analysis-card analysis-card-wide" data-analysis-card="network">${_chartProjectNetworkHtml()}</div>
-            <div class="analysis-card analysis-card-wide" data-analysis-card="saturation">${_chartSaturation(annotations, { project: true })}</div>
-            <div class="analysis-card analysis-card-wide" data-analysis-card="sentiment">${_chartSentiment(annotations, { project: true })}</div>
-            <div class="analysis-card analysis-card-wide" data-analysis-card="tfidf">${_chartTFIDF(annotations, { project: true })}</div>
+            <div class="analysis-card analysis-card-wide" data-analysis-card="saturation">${_chartSaturation(chartItems, { project: true })}</div>
+            <div class="analysis-card analysis-card-wide" data-analysis-card="sentiment">${_chartSentiment(chartItems, { project: true })}</div>
+            <div class="analysis-card analysis-card-wide" data-analysis-card="tfidf">${_chartTFIDF(chartItems, { project: true })}</div>
             <div class="analysis-card" data-analysis-card="project-shape">
                 <div class="analysis-card-header">${icon('layout-list')} Project Shape</div>
                 <div class="project-analysis-list">
@@ -531,7 +550,8 @@ function renderProjectAnalysis(project, codebookTagIds = new Set()) {
 }
 
 function _projectAnalysisAnnotations() {
-    return appState.activeProject?.annotations || [];
+    // Mirrors renderProjectAnalysis so a CSV matches the chart it came from.
+    return _rollupItems(appState.activeProject?.annotations || []);
 }
 
 // Resolve a CSS custom property to its actual value at call time.

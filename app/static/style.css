@@ -9384,6 +9384,73 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
 }
 .analysis-content.hidden { display: none; }
 
+/* ── Analysis toolbar: codebook level ────────────────────────────────────────
+   Themes are a tree but coding happens at the leaves, so every card needs to
+   know whether it is counting leaves or top-level parents. One control, shared
+   by the library and project dashboards. */
+.analysis-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+}
+
+.analysis-toolbar-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+
+.analysis-toolbar-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.analysis-rollup-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm, 4px);
+    overflow: hidden;
+}
+
+.analysis-rollup-btn {
+    background: none;
+    border: none;
+    padding: 4px 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+.analysis-rollup-btn + .analysis-rollup-btn { border-left: 1px solid var(--border-color); }
+.analysis-rollup-btn:hover { background: var(--bg-tertiary); }
+.analysis-rollup-btn.active { background: var(--accent); color: #fff; }
+
+/* Truncation and roll-up disclosures shown inside card headers. */
+.analysis-trunc,
+.analysis-rollup-note {
+    font-size: 10px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.analysis-rollup-note {
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    padding: 1px 7px;
+    color: var(--accent);
+}
+
+/* Inter-rater card: per-code prevalence and instability warnings. */
+.irr-n { font-size: 10px; color: var(--text-muted); font-weight: 400; margin-left: 4px; }
+.irr-warn { color: #f59e0b; }
+.irr-thin-flag { color: #f59e0b; font-size: 10px; }
+
 .analysis-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
