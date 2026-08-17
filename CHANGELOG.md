@@ -69,6 +69,33 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
     backing off to 30 s when idle and pausing while the window is hidden.
 
 ### Fixed
+- **Translating a selection no longer freezes the whole app.** The translate
+  route was declared `async def` while calling Argos synchronously, so the
+  CPU-bound translation ran *on* the event loop and uvicorn stopped accepting
+  connections until it finished — measured at ~30 s, during which saving an
+  annotation, or any other request, failed with `ERR_TIMED_OUT`. Blocking
+  handlers (translate, the package-index fetch, download start, and billing
+  checkout, which does a 15 s HTTP call) are now plain `def`, which FastAPI
+  dispatches to its threadpool. Verified with 44 concurrent requests during a
+  translation: all answered, slowest 0.08 s.
+- **Translation no longer needs the network, and is ~6× faster.** Argos builds
+  its sentence splitter with Stanza's default `download_method`, so every
+  translation re-fetched `resources_*.json` from raw.githubusercontent.com even
+  though each language package already ships that file; when GitHub rate-limited
+  the request it failed outright with `429 Too Many Requests`, surfaced in the
+  viewer as a failed translation. Stanza now prefers the bundled resources
+  (`REUSE_RESOURCES`). A cold translation went from 18.3 s (failing) to 2.8 s,
+  and a warm one takes 0.1 s.
+- Translation errors carry meaningful status codes instead of a blanket 400: 400
+  for an empty or over-long selection, 409 plus "Install it under Settings →
+  Translation" for a missing language pack, 500 for anything unexpected (which
+  is now logged with a traceback rather than swallowed).
+- The translate request has a 90 s deadline and reports what it is waiting for,
+  so a slow first run shows "Loading the translation model…" and a stalled one
+  reports a timeout instead of showing "Translating…" indefinitely. Both the
+  selection popup and the in-popup language switcher share one request path.
+- Concurrent translations are serialised, so a burst of clicks cannot start
+  several CTranslate2 runs across every core at once.
 - **Annotated text is selectable again.** Highlight, underline and area shapes
   are painted above the PDF text layer and were pointer-interactive so they
   could be clicked, which meant they swallowed the mousedown that starts a

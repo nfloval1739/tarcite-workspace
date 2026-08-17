@@ -51,7 +51,10 @@ def billing_balance_route() -> Dict:
 
 
 @router.post("/api/billing/checkout")
-async def billing_checkout_route(body: Dict[str, Any]) -> Dict:
+def billing_checkout_route(body: Dict[str, Any]) -> Dict:
+    # Sync on purpose: the httpx call below blocks for up to 15s, which would
+    # freeze the whole event loop if this handler were async. See the note at
+    # the top of routers/translation.py.
     device_id = get_device_id()
     amount_cents = body.get("amount_cents", 500)
     if amount_cents < 300:

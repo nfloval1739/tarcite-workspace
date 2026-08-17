@@ -108,6 +108,12 @@ class TranslationDownloadState:
 _downloads: Dict[str, TranslationDownloadState] = {}
 _lock = threading.Lock()
 
+# Translation runs in FastAPI's threadpool now (see routers/translation.py), so
+# several selections could otherwise be translated at once — each one a
+# CTranslate2 model doing CPU-bound work across every core.  One at a time keeps
+# a burst of clicks from turning into a thermal event.
+_translate_lock = threading.Lock()
+
 
 def _argos_available() -> bool:
     try:
@@ -344,6 +350,48 @@ def install_package(model_path: Path) -> None:
     argostranslate.package.install_from_path(str(model_path))
 
 
+_stanza_configured = False
+
+
+def _configure_stanza_offline() -> None:
+    """Stop Stanza re-downloading its resource index on every translation.
+
+    Argos builds its sentence splitter with
+    ``stanza.Pipeline(dir=<package>/stanza, ...)`` but leaves Stanza's default
+    ``download_method=DOWNLOAD_RESOURCES``, so constructing the pipeline fetches
+    ``resources_<version>.json`` from raw.githubusercontent.com — even though
+    every language package already ships that exact file locally.  When GitHub
+    rate-limits the request the translation dies with
+    "429 Client Error: Too Many Requests", surfacing in the viewer as a failed
+    translation, and an offline-first app has no business needing the network to
+    split sentences at all.
+
+    ``REUSE_RESOURCES`` uses the bundled file when it is there and only falls
+    back to downloading if it is genuinely missing.
+    """
+    global _stanza_configured
+    if _stanza_configured:
+        return
+    _stanza_configured = True
+
+    try:
+        import stanza
+        from stanza.pipeline.core import DownloadMethod
+    except Exception:  # stanza absent — Argos falls back to its own splitter
+        return
+
+    original = stanza.Pipeline
+    if getattr(original, "_tarcite_offline_default", False):
+        return
+
+    def pipeline_preferring_local_resources(*args, **kwargs):
+        kwargs.setdefault("download_method", DownloadMethod.REUSE_RESOURCES)
+        return original(*args, **kwargs)
+
+    pipeline_preferring_local_resources._tarcite_offline_default = True
+    stanza.Pipeline = pipeline_preferring_local_resources
+
+
 def translate_text(text: str, source_code: str, target_code: str) -> str:
     text = (text or "").strip()
     if not text:
@@ -355,13 +403,16 @@ def translate_text(text: str, source_code: str, target_code: str) -> str:
 
     import argostranslate.translate
     _quiet_argos_loggers()
+    _configure_stanza_offline()
 
     source_code = (source_code or "en").strip()
     target_code = (target_code or "id").strip()
     installed = get_installed_pairs()
     if (source_code, target_code) in installed:
-        return argostranslate.translate.translate(text, source_code, target_code)
+        with _translate_lock:
+            return argostranslate.translate.translate(text, source_code, target_code)
     if source_code != "en" and target_code != "en" and (source_code, "en") in installed and ("en", target_code) in installed:
-        pivot = argostranslate.translate.translate(text, source_code, "en")
-        return argostranslate.translate.translate(pivot, "en", target_code)
+        with _translate_lock:
+            pivot = argostranslate.translate.translate(text, source_code, "en")
+            return argostranslate.translate.translate(pivot, "en", target_code)
     raise RuntimeError(f"Offline translation model {source_code} -> {target_code} is not installed.")

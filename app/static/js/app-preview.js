@@ -4467,26 +4467,65 @@ function showSelectionPopup(anchorEvent) {
     setTimeout(() => document.addEventListener('mousedown', dismiss), 0);
 }
 
-async function translateSelectedText(text, clientX, clientY) {
-    showTranslationResultPopup(clientX, clientY, 'Translating...', true, false, text);
+// The first translation of a session loads a CTranslate2 model from disk and can
+// take several seconds; without a deadline a stalled request left "Translating…"
+// on screen forever, which read as a frozen app.
+const TRANSLATION_TIMEOUT_MS = 90000;
+
+// Single entry point for the translate API, used both by the selection popup and
+// by the language switcher inside the result popup.
+async function requestTranslation(text, source, target) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TRANSLATION_TIMEOUT_MS);
     try {
         const res = await fetch('/api/translation/translate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
             body: JSON.stringify({
                 text,
-                source_language: appState.translationSource || 'en',
-                target_language: appState.translationTarget || 'id',
+                source_language: source,
+                target_language: target,
                 item_key: appState.previewItem?.item_key || '',
                 page_index: appState.previewPage || 1,
             }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Translation failed');
-        showTranslationResultPopup(clientX, clientY, data.translation || '', false, false, text);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || `Translation failed (${res.status})`);
+        return data.translation || '';
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            throw new Error('Translation timed out. The model may still be loading — try again in a moment.');
+        }
+        throw err;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+// Tells the user what the wait is for instead of leaving a silent spinner.
+function startTranslationSlowNotice() {
+    return setTimeout(() => {
+        const body = document.querySelector('#translation-result-popup .translation-result-body');
+        if (body?.classList.contains('loading')) {
+            body.textContent = 'Loading the translation model… (first use is slower)';
+        }
+    }, 2500);
+}
+
+async function translateSelectedText(text, clientX, clientY) {
+    showTranslationResultPopup(clientX, clientY, 'Translating...', true, false, text);
+    const slowNotice = startTranslationSlowNotice();
+    try {
+        const translation = await requestTranslation(
+            text,
+            appState.translationSource || 'en',
+            appState.translationTarget || 'id');
+        showTranslationResultPopup(clientX, clientY, translation, false, false, text);
     } catch (err) {
         showTranslationResultPopup(clientX, clientY, err.message || 'Translation failed', false, true, text);
     } finally {
+        clearTimeout(slowNotice);
         window.getSelection()?.removeAllRanges();
     }
 }
@@ -4559,21 +4598,9 @@ function showTranslationResultPopup(clientX, clientY, text, loading = false, err
             popup.querySelector('.translation-result-actions')?.remove();
             popup.classList.remove('error');
 
+            const slowNotice = startTranslationSlowNotice();
             try {
-                const res = await fetch('/api/translation/translate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        text: originalText,
-                        source_language: newSrc,
-                        target_language: newTgt,
-                        item_key: appState.previewItem?.item_key || '',
-                        page_index: appState.previewPage || 1,
-                    }),
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || 'Translation failed');
-                const result = data.translation || '';
+                const result = await requestTranslation(originalText, newSrc, newTgt);
                 body.className = 'translation-result-body';
                 body.textContent = result;
                 const actions = document.createElement('div');
@@ -4590,6 +4617,7 @@ function showTranslationResultPopup(clientX, clientY, text, loading = false, err
                 body.textContent = err.message || 'Translation failed';
                 popup.classList.add('error');
             } finally {
+                clearTimeout(slowNotice);
                 select.disabled = false;
                 select.closest('.translation-pair-dropdown')?.classList.remove('disabled');
             }
