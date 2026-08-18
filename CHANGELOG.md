@@ -8,6 +8,28 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Drill-down from every chart to the annotations behind it.** Clicking a theme
+  bar, a donut segment, a co-occurrence pair, a matrix cell, a word in the
+  frequency or TF-IDF cards, or a node in the theme network now filters the
+  annotation list to exactly those annotations and explains the filter in a
+  banner with one click back. Theme drill-downs include the theme's whole
+  subtree; a co-occurrence pair requires *both* themes rather than either.
+- **Quotes / Notes / Both control for text analysis.** Word frequency, TF-IDF,
+  sentiment and KWIC read the author's words and your notes as one bag, so a
+  critical note ("weak evidence") scored the passage itself as negative and your
+  vocabulary appeared in the corpus's word frequencies. The scope is now
+  selectable, defaulting to both.
+- **Jaccard option for theme co-occurrence.** Raw counts rank pairs by how large
+  the two themes are, so the busiest themes always look related. The Jaccard
+  index divides the overlap by the union, promoting themes that genuinely travel
+  together; the raw n is still shown beside it.
+- **Whole-word matching in KWIC**, so "art" no longer matches "part" and
+  "artful". The boundary test is Unicode-aware rather than relying on `\b`,
+  which is ASCII-only and would fail on the scripts the tokeniser now supports.
+- **Krippendorff's α reported alongside Cohen's κ**, per code and as a
+  prevalence-weighted summary. α pools both coders' distributions instead of
+  using each coder's own marginals, so it is less flattered by two coders who
+  share a bias.
 - **Sentiment now reads Indonesian, and admits what it cannot read.** The
   polarity lexicons were English-only, so once the Unicode tokeniser landed an
   Indonesian corpus tokenised correctly and then matched nothing — the card drew
@@ -47,6 +69,31 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   themes"), including the theme network, which caps at the 60 most-used themes.
 
 ### Fixed
+- **Eleven CSS custom properties were referenced but never defined**, with no
+  fallback: `--border` (32 uses), `--bg-hover` (12), `--accent-rgb` (12),
+  `--text` (10), `--red` (9) and six others. Every declaration reading one was
+  discarded by the browser, so those elements rendered with no border, no hover
+  background and inherited rather than intended colours; `rgba(var(--accent-rgb),
+  …)` produced an invalid colour and dropped the whole declaration. The missing
+  names are now defined as aliases of the palette entries that do exist, and the
+  `--accent-rgb` usages were rewritten to `color-mix()`, which works across all
+  six accent themes without needing a triplet per theme. Found while trimming
+  the report stylesheet, not introduced by it.
+- **"Filter by file" applied to the sidebar only.** The annotation list and every
+  analysis chart ignored `annotationsViewFilter.itemKey`, because the filter
+  logic existed as three near-copies and only one honoured it. All three now
+  share a single predicate.
+- The analysis CSV export re-implemented the chart logic with its own third
+  stop-word list and the old ASCII-only tokeniser, so the exported word
+  frequencies and sentiment disagreed with the charts they claim to export. It
+  now shares the chart pipeline, including the theme roll-up, the text scope and
+  the negation-aware sentiment scorer.
+- The exported HTML report inlined the app's entire stylesheet — every rule for
+  the PDF viewer, library table and settings — into each file. It now carries
+  only the rules the report renders plus the theme variables, taking the CSS
+  from 242 KB to 28 KB.
+- `switchAnnotationsMode()` accessed four DOM elements without null checks,
+  which drill-down would have hit when called from a chart.
 - **Saturation could be declared by a single annotation.** The test was "did the
   very last annotation add a new theme?", so one trailing annotation flipped the
   verdict to "Saturated" and it was reported as a confident percentage.

@@ -492,6 +492,15 @@ function renderProjectAnalysis(project, codebookTagIds = new Set()) {
             <small class="analysis-toolbar-hint">${_analysisRollup === 'root'
                 ? 'every theme counted under its top-level parent'
                 : 'sub-themes counted separately from their parent'}</small>
+            <span class="analysis-toolbar-sep"></span>
+            <span class="analysis-toolbar-label">Text</span>
+            <div class="analysis-rollup-toggle" role="group" aria-label="Text analysed">
+                ${Object.entries(ANALYSIS_TEXT_SCOPE_LABELS).map(([k, label]) => `
+                <button class="analysis-rollup-btn${_analysisTextScope === k ? ' active' : ''}" type="button"
+                        onclick="setAnalysisTextScope('${k}')" title="Analyse ${label}">${
+                            k === 'both' ? 'Both' : k === 'quote' ? 'Quotes' : 'Notes'}</button>`).join('')}
+            </div>
+            <small class="analysis-toolbar-hint">word frequency, TF-IDF and sentiment read ${ANALYSIS_TEXT_SCOPE_LABELS[_analysisTextScope]}</small>
         </div>
         <div class="project-analysis-summary">
             <div class="project-analysis-kpi" data-analysis-card="kpi-coding">

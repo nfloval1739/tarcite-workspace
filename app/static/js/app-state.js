@@ -87,7 +87,9 @@ const appState = {
     tagAutocompleteTA: null,
     tagAutocompleteMatch: null,
     annotationsViewItems: [],
-    annotationsViewFilter: { tagIds: [], type: '', search: '', itemKey: '' },
+    // tagIds is OR (theme filter); tagGroups is AND-of-ORs (chart drill-down).
+    annotationsViewFilter: { tagIds: [], tagGroups: [], type: '', search: '', itemKey: '' },
+    annotationsViewDrill: '',
     annotationsViewSelected: new Set(),
     annotationsViewGroupBy: 'doc',
     annotationsViewMode: 'list',

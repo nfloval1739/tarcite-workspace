@@ -789,7 +789,8 @@ function toggleTagFilter(e, tagId) {
 }
 
 function clearAnnotationsFilter() {
-    appState.annotationsViewFilter = { tagIds: [], type: '', search: '', itemKey: '' };
+    appState.annotationsViewFilter = { tagIds: [], tagGroups: [], type: '', search: '', itemKey: '' };
+    appState.annotationsViewDrill = '';
     document.querySelectorAll('.notes-type-btn').forEach(b => b.classList.remove('active'));
     document.querySelector('.notes-type-btn[data-type=""]')?.classList.add('active');
     document.getElementById('sidebar-file-filter-toggle')?.classList.remove('active');
@@ -867,19 +868,7 @@ function renderSidebarAnnotations() {
     if (!list) return;
 
     const { tagIds, type, search, itemKey } = appState.annotationsViewFilter;
-    const filtered = appState.annotationsViewItems.filter(a => {
-        if (type && a.annotation_type !== type) return false;
-        if (itemKey && a.item_key !== itemKey) return false;
-        if (tagIds.length > 0) {
-            const ids = (a.tags || []).map(t => t.tag_id);
-            if (!tagIds.some(id => ids.includes(id))) return false;
-        }
-        if (search) {
-            const hay = ((a.quote || '') + ' ' + (a.comment || '') + ' ' + (a.item_title || '')).toLowerCase();
-            if (!hay.includes(search)) return false;
-        }
-        return true;
-    });
+    const filtered = _filteredAnnotations();
 
     if (badge) badge.textContent = String(filtered.length);
 
@@ -2115,26 +2104,16 @@ function renderAnnotationsView() {
 
     const { tagIds, type, search } = appState.annotationsViewFilter;
 
-    let items = appState.annotationsViewItems.filter(a => {
-        if (type && a.annotation_type !== type) return false;
-        if (tagIds.length > 0) {
-            const annTagIds = (a.tags || []).map(t => t.tag_id);
-            if (!tagIds.some(id => annTagIds.includes(id))) return false;
-        }
-        if (search) {
-            const haystack = ((a.quote || '') + ' ' + (a.comment || '') + ' ' + (a.item_title || '')).toLowerCase();
-            if (!haystack.includes(search)) return false;
-        }
-        return true;
-    });
+    let items = _filteredAnnotations();
 
     if (countEl) countEl.textContent = String(items.length);
+    const drillBanner = _drillBanner(items.length);
 
     const synthBtn = document.getElementById('annotations-synthesize-btn');
     if (synthBtn) synthBtn.disabled = appState.annotationsViewSelected.size === 0;
 
     if (items.length === 0) {
-        content.innerHTML = `<div class="annotations-view-empty">
+        content.innerHTML = drillBanner + `<div class="annotations-view-empty">
             No annotations found.<br>
             <small>Highlight text in any PDF to create annotations, then add <strong>#tags</strong> and notes.</small>
         </div>`;
@@ -2181,7 +2160,7 @@ function renderAnnotationsView() {
         html = items.map(a => renderAnnotationCard(a)).join('');
     }
 
-    content.innerHTML = html;
+    content.innerHTML = drillBanner + html;
     refreshIcons(content);
 
     // Re-attach checkbox state
@@ -2228,6 +2207,67 @@ function _analysisFilterSummary() {
     return parts.join(' · ');
 }
 
+/* The report inlined the app's entire stylesheet — around 200 KB of rules for
+   the library table, the PDF viewer, settings and everything else — into every
+   exported file.  Keep the rules the report can actually use: anything defining
+   custom properties or targeting the document root (which carries the whole
+   theme), plus any rule mentioning a class that appears in the report body. */
+function _cssForReport(css, reportRoot) {
+    if (!css) return '';
+    const present = new Set();
+    reportRoot.querySelectorAll('*').forEach(el => {
+        (el.classList || []).forEach(c => present.add(c));
+        if (el.id) present.add(el.id);
+    });
+    ['rpt-header', 'rpt-badge', 'rpt-methods'].forEach(c => present.add(c));
+
+    return _filterCssRules(css.replace(/\/\*[\s\S]*?\*\//g, ''), present)
+        .replace(/\s*\n\s*/g, '\n')
+        .replace(/;\s+/g, ';');
+}
+
+function _filterCssRules(css, present) {
+    const out = [];
+    let depth = 0, buffer = '', blockStart = 0;
+
+    for (let i = 0; i < css.length; i++) {
+        const ch = css[i];
+        buffer += ch;
+        if (ch === '{') {
+            if (depth === 0) blockStart = buffer.length - 1;
+            depth++;
+        } else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+                const selector = buffer.slice(0, blockStart).trim();
+                const body = buffer.slice(blockStart + 1, -1);
+
+                if (/^@(media|supports|layer)/i.test(selector)) {
+                    // Recurse: a responsive block is only worth carrying for the
+                    // rules inside it that the report actually uses.
+                    const inner = _filterCssRules(body, present);
+                    if (inner.trim()) out.push(`${selector}{${inner}}`);
+                } else if (_reportNeedsRule(selector, present)) {
+                    out.push(buffer.trim());
+                }
+                buffer = '';
+            }
+        }
+    }
+    return out.join('\n');
+}
+
+function _reportNeedsRule(selector, present) {
+    if (/^@(font-face|keyframes|import|charset)/i.test(selector)) return true;
+    /* A selector naming no class or id is a root/element rule — ":root", "body",
+       "html:not([data-theme=...])" — and carries the theme, so it travels.  Once
+       a selector names a component, that component decides: theme overrides like
+       `html[data-theme] .pdf-page` are no use to a report with no PDF in it. */
+    const tokens = selector.match(/[.#]([A-Za-z0-9_-]+)/g) || [];
+    if (!tokens.length) return true;
+    return tokens.some(t => present.has(t.slice(1)));
+}
+
 /* A figure from this dashboard can end up in a thesis, where "which annotations,
    filtered how, counted at what level, with which parameters" is exactly what a
    reader needs and what the report used to omit entirely. */
@@ -2255,7 +2295,7 @@ function _analysisMethodsRows(items) {
         ['Text processing', 'Intl.Segmenter tokenisation; English + Indonesian stop words removed'],
         ['Sentiment', `Keyword lexicon (English + Indonesian) with negation handling over quote + note; ${manual} annotation${manual !== 1 ? 's' : ''} manually flagged. Annotations with no lexicon match are reported as "not scored", not neutral`],
         ['Saturation criterion', 'No new theme across a run of ≥10% of annotations (minimum 5); fewer than 15 annotations is not judged'],
-        ['Inter-rater κ', 'Cohen\'s κ per code on shared annotations, summarised prevalence-weighted; covers coding agreement only, not which passages were selected'],
+        ['Inter-rater agreement', 'Cohen\'s κ and Krippendorff\'s α per code on shared annotations, each summarised prevalence-weighted; covers coding agreement only, not which passages were selected'],
         ['Generated by', `TarCite Workspace ${version}`],
     ];
 }
@@ -2302,7 +2342,7 @@ async function _buildAnalysisHTML() {
     let css = '';
     try {
         const res = await fetch(document.querySelector('link[rel="stylesheet"]')?.href || '/static/style.css');
-        css = await res.text();
+        css = _cssForReport(await res.text(), clone);
     } catch (e) {}
 
     const filterNote = _analysisFilterSummary();
@@ -2468,10 +2508,9 @@ async function exportAnalysisPrint() {
 
 function exportAnalysisData() {
     document.getElementById('analysis-export-menu')?.classList.add('hidden');
-    const items = _filteredAnnotations();
+    const items = _rollupItems(_filteredAnnotations());
     if (!items.length) { alert('No annotations to export.'); return; }
 
-    const STOP = new Set(['the','a','an','and','or','but','in','on','at','to','for','of','with','by','from','as','is','was','are','were','be','been','have','has','had','do','does','did','will','would','could','should','may','might','that','this','these','those','it','its','they','their','we','our','i','you','he','she','not','no','so','than','then','there','when','where','who','which','what','how','can','also','into','over','after','about','each','all','any','some','such','up','out','if']);
 
     function csv(rows) {
         return rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
@@ -2512,9 +2551,9 @@ function exportAnalysisData() {
 
     // 4. Word Frequency
     const wordFreq = {};
+    // Same tokeniser and stop-word lists as the chart, so the CSV matches it.
     items.forEach(a => {
-        const text = ((a.quote || '') + ' ' + (a.comment || '')).toLowerCase();
-        (text.match(/[a-z]{3,}/g) || []).forEach(w => { if (!STOP.has(w)) wordFreq[w] = (wordFreq[w] || 0) + 1; });
+        _contentWords(_analysisText(a)).forEach(w => { wordFreq[w] = (wordFreq[w] || 0) + 1; });
     });
     sections.push('\r\n=== Word Frequency (top 50) ===');
     sections.push(csv([['word', 'count'],
@@ -2540,15 +2579,20 @@ function exportAnalysisData() {
 
     // 6. Sentiment
     sections.push('\r\n=== Annotation Sentiment ===');
-    const POS = _POS_WORDS, NEG = _NEG_WORDS;
+    // Same scorer as the card — including negation handling, and the distinction
+    // between "neutral" and "nothing here could be scored".
     const sentRows = items.map(a => {
-        const words = ((a.quote || '') + ' ' + (a.comment || '')).toLowerCase().match(/[a-z]{3,}/g) || [];
-        let score = 0;
-        words.forEach(w => { if (POS.has(w)) score++; if (NEG.has(w)) score--; });
-        const sent = a.sentiment || (score > 0 ? 'pos' : score < 0 ? 'neg' : 'neu');
-        return [a.item_title || a.item_key, (a.page_index || 0) + 1, (a.tags || []).map(t => t.name).join('; '), sent, score];
+        const inferred = _scoreSentiment(_analysisText(a));
+        const sent = a.sentiment || inferred || 'not_scored';
+        return [
+            a.item_title || a.item_key,
+            (a.page_index || 0) + 1,
+            (a.tags || []).map(t => t.name).join('; '),
+            sent,
+            a.sentiment ? 'manual' : inferred ? 'keyword' : 'no lexicon match',
+        ];
     });
-    sections.push(csv([['source', 'page', 'themes', 'sentiment', 'score'], ...sentRows]));
+    sections.push(csv([['source', 'page', 'themes', 'sentiment', 'basis'], ...sentRows]));
 
     const blob = new Blob([sections.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -2565,29 +2609,143 @@ function switchAnnotationsMode(mode) {
     appState.annotationsViewMode = mode;
     document.getElementById('ann-mode-list')?.classList.toggle('active', mode === 'list');
     document.getElementById('ann-mode-analysis')?.classList.toggle('active', mode === 'analysis');
-    document.getElementById('annotations-sort-select').style.display = mode === 'list' ? '' : 'none';
-    document.getElementById('annotations-synthesize-btn').style.display = mode === 'list' ? '' : 'none';
-    document.querySelector('.annotations-export-wrap:not(#analysis-export-wrap)').style.display = mode === 'list' ? '' : 'none';
-    document.getElementById('analysis-export-wrap').style.display = mode === 'analysis' ? '' : 'none';
+    // Optional chaining throughout: drill-down now calls this from the charts,
+    // so a missing control must not take the whole view down with it.
+    const show = (el, visible) => { if (el) el.style.display = visible ? '' : 'none'; };
+    show(document.getElementById('annotations-sort-select'), mode === 'list');
+    show(document.getElementById('annotations-synthesize-btn'), mode === 'list');
+    show(document.querySelector('.annotations-export-wrap:not(#analysis-export-wrap)'), mode === 'list');
+    show(document.getElementById('analysis-export-wrap'), mode === 'analysis');
     document.getElementById('annotations-view-content')?.classList.toggle('hidden', mode === 'analysis');
     document.getElementById('analysis-content')?.classList.toggle('hidden', mode === 'list');
     if (mode === 'analysis') renderAnalysisDashboard();
 }
 
+/* One predicate behind the annotation list, the sidebar list and the analysis
+   dashboard.  They carried three near-copies, which is how the sidebar's
+   "filter by file" came to apply to the sidebar only: both the main list and
+   every chart ignored annotationsViewFilter.itemKey entirely.
+
+   `tagIds` keeps its existing OR semantics for the theme filter.  `tagGroups`
+   is an AND of ORs, which is what a drill-down needs — "an annotation under
+   this theme's subtree AND under that one's" for a co-occurrence pair. */
+function _matchesAnnotationFilter(a, filter = {}) {
+    const { tagIds = [], tagGroups = [], type = '', search = '', itemKey = '' } = filter;
+    if (type && a.annotation_type !== type) return false;
+    if (itemKey && a.item_key !== itemKey) return false;
+
+    const ids = (a.tags || []).map(t => t.tag_id);
+    if (tagIds.length && !tagIds.some(id => ids.includes(id))) return false;
+    if (tagGroups.length && !tagGroups.every(group => group.some(id => ids.includes(id)))) return false;
+
+    if (search) {
+        const hay = ((a.quote || '') + ' ' + (a.comment || '') + ' ' + (a.item_title || '')).toLowerCase();
+        if (!hay.includes(search)) return false;
+    }
+    return true;
+}
+
 function _filteredAnnotations() {
-    const { tagIds, type, search } = appState.annotationsViewFilter;
-    return appState.annotationsViewItems.filter(a => {
-        if (type && a.annotation_type !== type) return false;
-        if (tagIds.length > 0) {
-            const annTagIds = (a.tags || []).map(t => t.tag_id);
-            if (!tagIds.some(id => annTagIds.includes(id))) return false;
-        }
-        if (search) {
-            const hay = ((a.quote || '') + ' ' + (a.comment || '') + ' ' + (a.item_title || '')).toLowerCase();
-            if (!hay.includes(search)) return false;
-        }
-        return true;
-    });
+    return appState.annotationsViewItems.filter(a => _matchesAnnotationFilter(a, appState.annotationsViewFilter));
+}
+
+/* ── Which text the analysis reads ───────────────────────────────────────────
+   Quotes are the author's words; notes are yours.  Analysing them as one bag
+   means a critical note ("weak evidence") is scored as the source's own tone,
+   and your vocabulary shows up in the corpus's word frequencies.  Default stays
+   both, so nothing changes unless asked. */
+
+let _analysisTextScope = 'both';   // 'both' | 'quote' | 'comment'
+
+const ANALYSIS_TEXT_SCOPE_LABELS = { both: 'quotes + notes', quote: 'quotes only', comment: 'notes only' };
+
+function _analysisText(a) {
+    if (_analysisTextScope === 'quote') return a.quote || '';
+    if (_analysisTextScope === 'comment') return a.comment || '';
+    return (a.quote || '') + ' ' + (a.comment || '');
+}
+
+/* ── Drill-down ──────────────────────────────────────────────────────────────
+   "Show me the annotations behind this number" is the first thing anyone asks
+   of a chart, and until now no chart answered it.  Every drill-down routes
+   through here: it sets the shared filter, switches to the list, and leaves a
+   banner explaining what is being shown and how to get back. */
+
+function _themeSubtreeIds(tagId) {
+    return [tagId, ...getDescendantTagIds(tagId, appState.allTags || [])];
+}
+
+function _themeName(tagId) {
+    return (appState.allTags || []).find(t => t.tag_id === tagId)?.name || `#${tagId}`;
+}
+
+function drillIntoAnalysis(patch, label) {
+    // Keep the theme/type/file filters the user already set; add the drill on top.
+    appState.annotationsViewFilter = {
+        ...appState.annotationsViewFilter,
+        tagGroups: [],
+        itemKey: '',
+        ...patch,
+    };
+    appState.annotationsViewDrill = label;
+    const searchInput = document.getElementById('notes-search-input');
+    if (searchInput) searchInput.value = appState.annotationsViewFilter.search || '';
+    switchAnnotationsMode('list');
+    renderAnnotationsView();
+    renderSidebarAnnotations();
+    document.getElementById('annotations-view-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function drillIntoTheme(tagId) {
+    drillIntoAnalysis({ tagGroups: [_themeSubtreeIds(tagId)] }, `Theme: ${_themeName(tagId)}`);
+}
+
+function drillIntoThemePair(tagA, tagB) {
+    drillIntoAnalysis(
+        { tagGroups: [_themeSubtreeIds(tagA), _themeSubtreeIds(tagB)] },
+        `${_themeName(tagA)} × ${_themeName(tagB)}`);
+}
+
+function drillIntoType(type) {
+    drillIntoAnalysis({ type }, `Type: ${type}`);
+}
+
+function drillIntoThemeDocument(tagId, itemKey, docTitle) {
+    drillIntoAnalysis(
+        { tagGroups: [_themeSubtreeIds(tagId)], itemKey },
+        `${_themeName(tagId)} in ${docTitle || itemKey}`);
+}
+
+function drillIntoWord(word, tagId) {
+    drillIntoAnalysis(
+        tagId ? { search: word.toLowerCase(), tagGroups: [_themeSubtreeIds(tagId)] } : { search: word.toLowerCase() },
+        tagId ? `"${word}" in ${_themeName(tagId)}` : `Word: "${word}"`);
+}
+
+function clearAnalysisDrill() {
+    appState.annotationsViewDrill = '';
+    appState.annotationsViewFilter = { ...appState.annotationsViewFilter, tagGroups: [], itemKey: '', search: '' };
+    const searchInput = document.getElementById('notes-search-input');
+    if (searchInput) searchInput.value = '';
+    renderAnnotationsView();
+    renderSidebarAnnotations();
+}
+
+function _drillBanner(count) {
+    if (!appState.annotationsViewDrill) return '';
+    return `
+        <div class="analysis-drill-banner">
+            ${icon('filter')}
+            <span>Showing <strong>${count}</strong> annotation${count !== 1 ? 's' : ''} · ${escapeHtml(appState.annotationsViewDrill)}</span>
+            <button type="button" onclick="clearAnalysisDrill()">${icon('x')} Clear</button>
+            <button type="button" onclick="switchAnnotationsMode('analysis')">${icon('bar-chart-3')} Back to analysis</button>
+        </div>`;
+}
+
+function setAnalysisTextScope(scope) {
+    _analysisTextScope = ['quote', 'comment'].includes(scope) ? scope : 'both';
+    if (appState.activeCenterView === 'annotations') renderAnalysisDashboard();
+    if (appState.activeProject) renderProjectDetail(appState.activeProject);
 }
 
 function renderAnalysisDashboard() {
@@ -2610,6 +2768,15 @@ function renderAnalysisDashboard() {
             <small class="analysis-toolbar-hint">${_analysisRollup === 'root'
                 ? 'every theme counted under its top-level parent'
                 : 'sub-themes counted separately from their parent'}</small>
+            <span class="analysis-toolbar-sep"></span>
+            <span class="analysis-toolbar-label">Text</span>
+            <div class="analysis-rollup-toggle" role="group" aria-label="Text analysed">
+                ${Object.entries(ANALYSIS_TEXT_SCOPE_LABELS).map(([k, label]) => `
+                <button class="analysis-rollup-btn${_analysisTextScope === k ? ' active' : ''}" type="button"
+                        onclick="setAnalysisTextScope('${k}')" title="Analyse ${label}">${
+                            k === 'both' ? 'Both' : k === 'quote' ? 'Quotes' : 'Notes'}</button>`).join('')}
+            </div>
+            <small class="analysis-toolbar-hint">word frequency, TF-IDF, sentiment and KWIC read ${ANALYSIS_TEXT_SCOPE_LABELS[_analysisTextScope]}</small>
         </div>
         <div class="analysis-grid">
             <div class="analysis-card" data-analysis-card="theme-frequency">${_chartThemeFrequency(items)}</div>
@@ -2633,7 +2800,7 @@ function renderAnalysisDashboard() {
 function _chartThemeFrequency(items, options = {}) {
     const counts = {};
     items.forEach(a => (a.tags || []).forEach(t => {
-        if (!counts[t.tag_id]) counts[t.tag_id] = { name: t.name, color: t.color, count: 0 };
+        if (!counts[t.tag_id]) counts[t.tag_id] = { tag_id: t.tag_id, name: t.name, color: t.color, count: 0 };
         counts[t.tag_id].count++;
     }));
     const all = Object.values(counts).sort((a, b) => b.count - a.count);
@@ -2648,7 +2815,9 @@ function _chartThemeFrequency(items, options = {}) {
     return `
         <div class="analysis-card-header"><span>${icon('git-branch')} Theme Frequency</span>${_analysisRollupNote()}${_shownOf(sorted.length, all.length, 'themes')}${exportBtn}</div>
         <div class="analysis-bars">${sorted.map(t => `
-            <div class="analysis-bar-row">
+            <div class="analysis-bar-row analysis-drill" role="button" tabindex="0"
+                 title="Show the ${t.count} annotation${t.count !== 1 ? 's' : ''} under ${escapeHtml(t.name)}"
+                 onclick="drillIntoTheme(${t.tag_id})">
                 <span class="analysis-bar-label" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</span>
                 <div class="analysis-bar-track">
                     <div class="analysis-bar-fill" style="width:${(t.count/max*100).toFixed(1)}%;background:${t.color || 'var(--accent)'}"></div>
@@ -2691,7 +2860,9 @@ function _chartAnnotationType(items) {
                 <text x="${cx}" y="${cy+5}" text-anchor="middle" class="analysis-donut-label">${total}</text>
             </svg>
             <div class="analysis-legend">${segs.map(s => `
-                <div class="analysis-legend-item">
+                <div class="analysis-legend-item analysis-drill" role="button" tabindex="0"
+                     title="Show the ${s.count} ${s.label.toLowerCase()} annotation${s.count !== 1 ? 's' : ''}"
+                     onclick="drillIntoType('${s.key}')">
                     <span class="analysis-legend-dot" style="background:${s.color}"></span>
                     <span>${s.label}</span>
                     <span class="analysis-legend-count">${s.count} · ${(s.count/total*100).toFixed(0)}%</span>
@@ -2837,7 +3008,7 @@ function _setProjWfMode(mode) {
 function _chartProjWordFrequency(items) {
     const wc = {};
     items.forEach(a => {
-        _contentWords((a.quote || '') + ' ' + (a.comment || ''))
+        _contentWords(_analysisText(a))
             .forEach(w => { wc[w] = (wc[w] || 0) + 1; });
     });
     const distinct = Object.keys(wc).length;
@@ -2877,7 +3048,7 @@ function _setWfMode(mode) {
 function _chartWordFrequency(items) {
     const wc = {};
     items.forEach(a => {
-        _contentWords((a.quote || '') + ' ' + (a.comment || ''))
+        _contentWords(_analysisText(a))
             .forEach(w => { wc[w] = (wc[w] || 0) + 1; });
     });
     const distinct = Object.keys(wc).length;
@@ -2914,7 +3085,8 @@ function _renderWf(sorted, max) {
 
 function _renderWfBars(sorted, max) {
     return `<div class="analysis-bars analysis-bars-2col">${sorted.slice(0, 20).map(([w, n]) => `
-        <div class="analysis-bar-row">
+        <div class="analysis-bar-row analysis-drill" role="button" tabindex="0"
+             title="Show the annotations containing “${escapeHtml(w)}”" onclick="drillIntoWord('${escapeJs(w)}')">
             <span class="analysis-bar-label">${escapeHtml(w)}</span>
             <div class="analysis-bar-track">
                 <div class="analysis-bar-fill" style="width:${(n/max*100).toFixed(1)}%;background:var(--accent)"></div>
@@ -2931,7 +3103,7 @@ function _renderWfCloud(sorted, max) {
         const size = Math.round(minPx + (maxPx - minPx) * ratio);
         const weight = ratio > 0.55 ? 700 : ratio > 0.25 ? 500 : 400;
         const opacity = (0.4 + 0.6 * ratio).toFixed(2);
-        return `<span class="wf-cloud-word" style="font-size:${size}px;font-weight:${weight};opacity:${opacity}" title="${escapeHtml(w)}: ${n}">${escapeHtml(w)}</span>`;
+        return `<span class="wf-cloud-word analysis-drill" role="button" tabindex="0" style="font-size:${size}px;font-weight:${weight};opacity:${opacity}" title="${escapeHtml(w)}: ${n} — click to show them" onclick="drillIntoWord('${escapeJs(w)}')">${escapeHtml(w)}</span>`;
     }).join('')}</div>`;
 }
 
@@ -2941,40 +3113,77 @@ function _renderWfTreemap(sorted, max) {
         const pct = Math.max(8, ratio * 92).toFixed(1);
         const height = Math.round(36 + ratio * 36);
         const opacity = (0.4 + 0.6 * ratio).toFixed(2);
-        return `<div class="wf-treemap-tile" style="width:calc(${pct}% - 4px);height:${height}px;opacity:${opacity}" title="${escapeHtml(w)}: ${n}">
+        return `<div class="wf-treemap-tile analysis-drill" role="button" tabindex="0" style="width:calc(${pct}% - 4px);height:${height}px;opacity:${opacity}" title="${escapeHtml(w)}: ${n} — click to show them" onclick="drillIntoWord('${escapeJs(w)}')">
             <span class="wf-treemap-word">${escapeHtml(w)}</span>
             <span class="wf-treemap-count">${n}</span>
         </div>`;
     }).join('')}</div>`;
 }
 
+let _coocMetric = 'count';   // 'count' | 'jaccard'
+
+function setCoocMetric(metric) {
+    _coocMetric = metric === 'jaccard' ? 'jaccard' : 'count';
+    if (appState.activeCenterView === 'annotations') renderAnalysisDashboard();
+    if (appState.activeProject) renderProjectDetail(appState.activeProject);
+}
+
 function _chartCoOccurrence(items) {
     const pairs = {};
+    const themeTotals = {};
     items.forEach(a => {
         const tags = a.tags || [];
+        tags.forEach(t => { themeTotals[t.tag_id] = (themeTotals[t.tag_id] || 0) + 1; });
         for (let i = 0; i < tags.length; i++) for (let j = i + 1; j < tags.length; j++) {
             const key = [tags[i].tag_id, tags[j].tag_id].sort().join('-');
             if (!pairs[key]) pairs[key] = { a: tags[i], b: tags[j], count: 0 };
             pairs[key].count++;
         }
     });
-    const allPairs = Object.values(pairs).sort((a, b) => b.count - a.count);
+
+    /* Raw counts rank pairs by how big the two themes are, so the busiest themes
+       always appear to be related.  Jaccard divides the overlap by the union, so
+       it answers "how much of the time these two appear, do they appear
+       together" — two small themes that always co-occur outrank a large pair
+       that overlaps incidentally. */
+    Object.values(pairs).forEach(p => {
+        const union = (themeTotals[p.a.tag_id] || 0) + (themeTotals[p.b.tag_id] || 0) - p.count;
+        p.jaccard = union > 0 ? p.count / union : 0;
+    });
+
+    const allPairs = Object.values(pairs).sort((x, y) =>
+        _coocMetric === 'jaccard' ? (y.jaccard - x.jaccard) || (y.count - x.count) : (y.count - x.count));
     const sorted = allPairs.slice(0, 12);
     if (!sorted.length) return `<div class="analysis-card-header"><span>Theme Co-occurrence</span></div><p class="analysis-empty">Tag multiple themes on the same annotation to see co-occurring pairs.</p>`;
-    const max = sorted[0].count;
+
+    const valueOf = p => _coocMetric === 'jaccard' ? p.jaccard : p.count;
+    const max = valueOf(sorted[0]) || 1;
     return `
-        <div class="analysis-card-header"><span>${icon('git-merge')} Theme Co-occurrence</span><small>themes appearing on the same annotation</small>${_analysisRollupNote()}${_shownOf(sorted.length, allPairs.length, 'pairs')}</div>
+        <div class="analysis-card-header"><span>${icon('git-merge')} Theme Co-occurrence</span>
+            <small>${_coocMetric === 'jaccard'
+                ? 'Jaccard index — shared annotations ÷ annotations carrying either theme'
+                : 'raw count of annotations carrying both themes'}</small>
+            ${_analysisRollupNote()}${_shownOf(sorted.length, allPairs.length, 'pairs')}
+            <div class="analysis-rollup-toggle analysis-metric-toggle" role="group" aria-label="Co-occurrence metric">
+                <button class="analysis-rollup-btn${_coocMetric === 'count' ? ' active' : ''}" type="button" onclick="setCoocMetric('count')" title="Rank by raw co-occurrence count">Count</button>
+                <button class="analysis-rollup-btn${_coocMetric === 'jaccard' ? ' active' : ''}" type="button" onclick="setCoocMetric('jaccard')" title="Rank by Jaccard index, which corrects for theme size">Jaccard</button>
+            </div>
+        </div>
         <div class="analysis-bars analysis-bars-2col">${sorted.map(p => `
-            <div class="analysis-bar-row">
+            <div class="analysis-bar-row analysis-drill" role="button" tabindex="0"
+                 title="Show the ${p.count} annotation${p.count !== 1 ? 's' : ''} carrying both themes"
+                 onclick="drillIntoThemePair(${p.a.tag_id}, ${p.b.tag_id})">
                 <span class="analysis-cooc-label">
                     <span style="color:${p.a.color||'var(--accent)'}">${escapeHtml(p.a.name)}</span>
                     <span class="analysis-cooc-sep">×</span>
                     <span style="color:${p.b.color||'var(--accent)'}">${escapeHtml(p.b.name)}</span>
                 </span>
                 <div class="analysis-bar-track">
-                    <div class="analysis-bar-fill" style="width:${(p.count/max*100).toFixed(1)}%;background:linear-gradient(90deg,${p.a.color||'var(--accent)'},${p.b.color||'var(--accent)'})"></div>
+                    <div class="analysis-bar-fill" style="width:${(valueOf(p)/max*100).toFixed(1)}%;background:linear-gradient(90deg,${p.a.color||'var(--accent)'},${p.b.color||'var(--accent)'})"></div>
                 </div>
-                <span class="analysis-bar-count">${p.count}</span>
+                <span class="analysis-bar-count">${_coocMetric === 'jaccard'
+                    ? `${p.jaccard.toFixed(2)}<small class="analysis-bar-sub"> n=${p.count}</small>`
+                    : p.count}</span>
             </div>`).join('')}
         </div>`;
 }
@@ -3033,7 +3242,9 @@ function _chartDocumentMatrix(items, options = {}) {
                         ${topDocs.map(([k]) => {
                             const v = matrix[t.tag_id]?.[k] || 0;
                             const intensity = (v / maxVal * 0.75 + (v ? 0.1 : 0)).toFixed(2);
-                            return `<td class="heatmap-cell" title="${v} annotation${v!==1?'s':''}">
+                            const title = docsMap[k] || k;
+                            return `<td class="heatmap-cell${v ? ' analysis-drill' : ''}" title="${v} annotation${v!==1?'s':''}${v ? ' — click to show them' : ''}"${
+                                v ? ` role="button" tabindex="0" onclick="drillIntoThemeDocument(${t.tag_id}, '${escapeJs(k)}', '${escapeJs(title)}')"` : ''}>
                                 <div class="heatmap-fill" style="opacity:${intensity};background:${t.color||'var(--accent)'}"></div>
                                 <span class="heatmap-val">${v || ''}</span>
                             </td>`;
@@ -3135,7 +3346,7 @@ function _chartThemeNetwork(items) {
     return `
         <div class="analysis-card-header">
             <span>${icon('share-2')} Theme Relationship Network</span>
-            <small>node size = frequency · edge = co-occurrence</small>
+            <small>node size = frequency · edge = co-occurrence · click a node for its annotations</small>
             ${_analysisRollupNote()}<small class="analysis-trunc" id="network-cap-note"></small>
             <div class="analysis-export-actions">
                 <button class="analysis-export-chip" type="button" onclick="exportProjectNetworkData()" title="Download network nodes and edges as CSV">${icon('table-2')} Data</button>
@@ -3178,7 +3389,7 @@ function _chartProjectNetworkHtml() {
     return `
         <div class="analysis-card-header">
             <span>${icon('share-2')} Theme Relationship Network</span>
-            <small>node size = frequency · edge = co-occurrence</small>
+            <small>node size = frequency · edge = co-occurrence · click a node for its annotations</small>
             ${_analysisRollupNote()}<small class="analysis-trunc" id="proj-network-cap-note"></small>
             <div class="analysis-export-actions">
                 <button class="analysis-export-chip" type="button" onclick="exportProjectNetworkData()" title="Download network nodes and edges as CSV">${icon('table-2')} Data</button>
@@ -3479,6 +3690,8 @@ function _netAttachEvents(canvas) {
     const onMouseDown = e => {
         const { x, y } = _netCanvasXY(canvas, e);
         const hit = _netHitNode(x, y);
+        // Remember where the press landed so mouseup can tell a click from a drag.
+        _netState.pressed = { node: hit, mx: e.clientX, my: e.clientY };
         if (hit) {
             _netState.dragging = hit;
             canvas.style.cursor = 'grabbing';
@@ -3506,11 +3719,18 @@ function _netAttachEvents(canvas) {
         }
     };
 
-    const onMouseUp = () => {
+    const onMouseUp = e => {
         if (!_netState) return;
+        const pressed = _netState.pressed;
+        _netState.pressed = null;
         _netState.dragging = null;
         _netState.panning = false;
         canvas.style.cursor = 'default';
+        // A press and release on the same node, without dragging it, means
+        // "show me this theme's annotations".
+        if (pressed?.node && e && Math.abs(e.clientX - pressed.mx) < 4 && Math.abs(e.clientY - pressed.my) < 4) {
+            drillIntoTheme(pressed.node.id);
+        }
     };
 
     canvas.addEventListener('wheel', onWheel, { passive: false });
@@ -3570,10 +3790,31 @@ function _netZoomFit() {
 // Rows rendered at once; every match is still counted and reported.
 const KWIC_RESULT_LIMIT = 200;
 
+/* Unicode-aware word-boundary test: \b in JavaScript is ASCII-only, which would
+   mis-handle the very scripts the tokeniser was fixed for. */
+function _isWholeWordHit(haystack, start, length) {
+    const wordChar = /[\p{L}\p{N}_]/u;
+    const before = start > 0 ? haystack[start - 1] : '';
+    const after = start + length < haystack.length ? haystack[start + length] : '';
+    return !(before && wordChar.test(before)) && !(after && wordChar.test(after));
+}
+
+let _kwicWholeWord = false;
+
+function setKwicWholeWord(on) {
+    _kwicWholeWord = !!on;
+    renderKWICResults(document.getElementById('kwic-input')?.value || '');
+}
+
 function _chartKWIC() {
     return `
-        <div class="analysis-card-header"><span>${icon('search')} Keyword in Context (KWIC)</span><small>find a word across all annotations</small></div>
-        <input type="text" class="compact-input" id="kwic-input" placeholder="Type a word or phrase…" oninput="renderKWICResults(this.value)">
+        <div class="analysis-card-header"><span>${icon('search')} Keyword in Context (KWIC)</span>
+            <small>searching ${ANALYSIS_TEXT_SCOPE_LABELS[_analysisTextScope]}</small>
+            <label class="kwic-option" title="Match the whole word only — otherwise “art” also matches “part”">
+                <input type="checkbox" ${_kwicWholeWord ? 'checked' : ''} onchange="setKwicWholeWord(this.checked)"> whole word
+            </label>
+        </div>
+        <input type="text" class="compact-input" id="kwic-input" placeholder="Type a word or phrase…" value="${escapeHtml(document.getElementById('kwic-input')?.value || '')}" oninput="renderKWICResults(this.value)">
         <div id="kwic-results"><p class="analysis-empty">Type a keyword above to see every annotation it appears in.</p></div>`;
 }
 
@@ -3596,10 +3837,15 @@ function renderKWICResults(query) {
        as "51").  Count every match, collect up to the limit, and say which is
        which. */
     for (const a of items) {
-        const text = (a.quote || '') + (a.comment ? '\n' + a.comment : '');
+        const text = _analysisTextScope === 'both'
+            ? (a.quote || '') + (a.comment ? '\n' + a.comment : '')
+            : _analysisText(a);
         const lower = text.toLowerCase();
         let pos = 0;
         while ((pos = lower.indexOf(q, pos)) !== -1) {
+            // Whole-word mode: reject a hit that has a letter or digit hard
+            // against either end, so "art" stops matching "part".
+            if (_kwicWholeWord && !_isWholeWordHit(lower, pos, q.length)) { pos += q.length; continue; }
             total++;
             if (results.length < KWIC_RESULT_LIMIT) {
                 const start = Math.max(0, pos - 45);
@@ -3776,7 +4022,7 @@ function _chartSentiment(items, options = {}) {
         if (a.sentiment) { manualCount++; return { ...a, _sent: a.sentiment, _manual: true }; }
         // null = nothing in this annotation could be scored, reported as its own
         // category rather than silently counted as neutral.
-        return { ...a, _sent: _scoreSentiment((a.quote || '') + ' ' + (a.comment || '')) || 'none', _manual: false };
+        return { ...a, _sent: _scoreSentiment(_analysisText(a)) || 'none', _manual: false };
     });
 
     const pos = tagged.filter(a => a._sent === 'pos').length;
@@ -3865,7 +4111,7 @@ function _chartSentiment(items, options = {}) {
 function _chartTFIDF(items, options = {}) {
     const themeCorpus = {};
     items.forEach(a => {
-        const words = _contentWords((a.quote || '') + ' ' + (a.comment || ''));
+        const words = _contentWords(_analysisText(a));
         (a.tags || []).forEach(t => {
             if (!themeCorpus[t.tag_id]) themeCorpus[t.tag_id] = { ...t, words: [] };
             themeCorpus[t.tag_id].words.push(...words);
@@ -3910,7 +4156,9 @@ function _chartTFIDF(items, options = {}) {
             <div class="tfidf-theme-block">
                 <div class="tfidf-theme-name"><span class="tfidf-dot" style="background:${t.color || 'var(--accent)'}"></span><span style="color:${t.color || 'var(--accent)'}">${escapeHtml(t.name)}</span></div>
                 <div class="analysis-bars">${t.tfidf.map(({ w, score }) => `
-                    <div class="analysis-bar-row">
+                    <div class="analysis-bar-row analysis-drill" role="button" tabindex="0"
+                         title="Show “${escapeHtml(w)}” within ${escapeHtml(t.name)}"
+                         onclick="drillIntoWord('${escapeJs(w)}', ${t.tag_id})">
                         <span class="analysis-bar-label">${escapeHtml(w)}</span>
                         <div class="analysis-bar-track">
                             <div class="analysis-bar-fill" style="width:${(score / t.maxScore * 100).toFixed(1)}%;background:${t.color || 'var(--accent)'}"></div>
@@ -3977,9 +4225,26 @@ function computeIRR() {
             const po = (a11 + a00) / n;
             const pe = ((a11 + a10) / n) * ((a11 + a01) / n) + ((a01 + a00) / n) * ((a10 + a00) / n);
             const kappa = pe >= 1 ? 1 : (po - pe) / (1 - pe);
+            /* Krippendorff's α for the same binary decision.  κ and α disagree
+               exactly where it matters — α uses one pooled distribution of all
+               values rather than each coder's own marginals, so it is less
+               flattered by two coders who share the same bias, and it is what
+               reviewers increasingly ask for.  Nominal α with two coders and no
+               missing values:
+                 D_o = disagreeing units / units
+                 D_e = 2·n₁·n₀ / (N·(N−1)),  N = 2·units                     */
+            const units = n;
+            const disagree = a10 + a01;
+            const ones = 2 * a11 + a10 + a01;      // all "code applied" values
+            const N = 2 * units;
+            const zeros = N - ones;
+            const Do = disagree / units;
+            const De = N > 1 ? (2 * ones * zeros) / (N * (N - 1)) : 0;
+            const alpha = De > 0 ? 1 - Do / De : 1;
+
             // Instances = annotations either coder assigned this code. It is the
             // weight for the summary and the warning flag for unstable codes.
-            return { tag, kappa, n1: a11 + a10, n2: a11 + a01, instances: a11 + a10 + a01, agreed: a11 };
+            return { tag, kappa, alpha, n1: a11 + a10, n2: a11 + a01, instances: a11 + a10 + a01, agreed: a11 };
         }).filter(r => r.n1 > 0 || r.n2 > 0).sort((a, b) => b.kappa - a.kappa);
 
         appState._irrData = { results, shared: shared.length, mineOnly, theirsOnly, rollup: _analysisRollup };
@@ -4005,6 +4270,9 @@ function _renderKappaResults({ results, shared, mineOnly = 0, theirsOnly = 0 }) 
         ? results.reduce((s, r) => s + r.kappa * r.instances, 0) / totalInstances
         : 0;
     const unweighted = results.length ? results.reduce((s, r) => s + r.kappa, 0) / results.length : 0;
+    const weightedAlpha = totalInstances
+        ? results.reduce((s, r) => s + r.alpha * r.instances, 0) / totalInstances
+        : 0;
     const band = k => k >= 0.8 ? ['#22c55e', 'Almost perfect']
                     : k >= 0.6 ? ['#f59e0b', 'Substantial']
                     : k >= 0.4 ? ['#f97316', 'Moderate']
@@ -4017,7 +4285,7 @@ function _renderKappaResults({ results, shared, mineOnly = 0, theirsOnly = 0 }) 
         <div class="irr-summary">
             <div class="irr-kappa-big" style="color:${kappaColor}">${weighted.toFixed(3)}</div>
             <div class="irr-kappa-meta">${kappaLabel} · prevalence-weighted across ${results.length} code${results.length !== 1 ? 's' : ''}
-                <br><small>unweighted mean κ ${unweighted.toFixed(3)} · ${shared} annotations coded by both</small>
+                <br><small>Krippendorff's α ${weightedAlpha.toFixed(3)} · unweighted mean κ ${unweighted.toFixed(3)} · ${shared} annotations coded by both</small>
                 ${(mineOnly || theirsOnly) ? `<br><small class="irr-warn">κ covers shared annotations only — ${mineOnly} of yours and ${theirsOnly} of theirs have no counterpart, so disagreement about <em>what</em> to code is not measured here.</small>` : ''}
                 ${thin ? `<br><small class="irr-warn">${thin} code${thin !== 1 ? 's' : ''} used fewer than ${IRR_MIN_INSTANCES} times — κ is unstable at that prevalence.</small>` : ''}
                 <button class="btn-secondary" style="font-size:0.75rem;padding:2px 8px;margin-left:12px" onclick="appState._irrData=null;renderAnalysisDashboard()">Reset</button>
@@ -4033,7 +4301,7 @@ function _renderKappaResults({ results, shared, mineOnly = 0, theirsOnly = 0 }) 
                     <div class="analysis-bar-track">
                         <div class="analysis-bar-fill" style="width:${(Math.max(0, r.kappa) * 100).toFixed(1)}%;background:${c};${unstable ? 'opacity:.45' : ''}"></div>
                     </div>
-                    <span class="analysis-bar-count" style="color:${c}">${r.kappa.toFixed(2)}<small class="irr-n"> n=${r.instances}</small></span>
+                    <span class="analysis-bar-count" style="color:${c}">${r.kappa.toFixed(2)}<small class="irr-n"> α ${r.alpha.toFixed(2)} · n=${r.instances}</small></span>
                 </div>`;
             }).join('')}
         </div>`;

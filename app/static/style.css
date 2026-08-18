@@ -10,6 +10,23 @@
     --text-secondary: #94a3c4;
     --text-muted: #5a6d8e;
     --border-color: #1e3a6a;
+
+    /* Aliases for names used throughout this sheet but never defined anywhere.
+       Each had no value and no fallback, so every declaration reading one was
+       dropped: elements rendered with no border, no hover background, and
+       inherited rather than intended text colours. Defined here once — var()
+       substitutes at use time, so they follow whichever theme is active. */
+    --border: var(--border-color);          /* 32 uses */
+    --text: var(--text-primary);            /* 10 uses */
+    --red: var(--error);                    /*  9 uses */
+    --text-tertiary: var(--text-muted);     /*  4 uses */
+    --bg: var(--bg-primary);                /*  2 uses */
+    --bg-hover: var(--bg-tertiary);         /* 12 uses */
+    --hover-bg: var(--bg-tertiary);         /*  2 uses */
+    --bg-sidebar: var(--bg-secondary);      /*  1 use  */
+    --bg-input: var(--bg-secondary);        /*  fallback target */
+    --green: var(--success);                /*  1 use  */
+    --radius-md: var(--radius);             /*  1 use  */
     --accent: #2d6fd4;
     --accent-hover: #1b5ab8;
     --accent-glow: rgba(45, 111, 212, 0.25);
@@ -2094,7 +2111,7 @@ body.pdf-fullscreen-open .ink-anchor-popup {
     padding: 12px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    background: rgba(var(--accent-rgb),0.05);
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
 .auto-ann-apply-settings .auto-ann-grid {
@@ -2188,15 +2205,15 @@ body.pdf-fullscreen-open .ink-anchor-popup {
 .auto-ann-color.active {
     border-color: var(--text-primary);
     transform: scale(1.13);
-    box-shadow: 0 0 0 3px rgba(var(--accent-rgb),0.18), inset 0 0 0 1px rgba(0,0,0,0.12);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), inset 0 0 0 1px rgba(0,0,0,0.12);
 }
 
 .auto-ann-result {
     margin: 0 14px 12px;
     padding: 12px;
-    border: 1px solid rgba(var(--accent-rgb),0.35);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
     border-radius: var(--radius-sm);
-    background: linear-gradient(135deg, rgba(var(--accent-rgb),0.16), rgba(var(--accent-rgb),0.05));
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--accent) 5%, transparent));
 }
 
 .auto-ann-result-main {
@@ -2240,7 +2257,7 @@ body.pdf-fullscreen-open .ink-anchor-popup {
 
 .auto-ann-result.is-done {
     border-color: rgba(34,197,94,0.45);
-    background: linear-gradient(135deg, rgba(34,197,94,0.18), rgba(var(--accent-rgb),0.06));
+    background: linear-gradient(135deg, rgba(34,197,94,0.18), color-mix(in srgb, var(--accent) 6%, transparent));
 }
 
 .auto-ann-result.is-error {
@@ -5954,7 +5971,7 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
 .translation-installed-pill.active {
     border-color: var(--accent);
     color: var(--accent);
-    background: rgba(var(--accent-rgb), 0.08);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .translation-installed-empty {
@@ -7680,7 +7697,7 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
 
 .project-section-item.active {
     border-color: var(--accent);
-    background: rgba(var(--accent-rgb), 0.10);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     color: var(--text-primary);
 }
 
@@ -9446,6 +9463,62 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
     color: var(--accent);
 }
 
+.analysis-toolbar-sep {
+    width: 1px;
+    align-self: stretch;
+    margin: 0 4px;
+    background: var(--border-color);
+}
+
+.analysis-metric-toggle { margin-left: auto; }
+
+/* Drill-down: anything that answers "show me the annotations behind this". */
+.analysis-drill { cursor: pointer; }
+.analysis-drill:hover { background: var(--bg-tertiary); border-radius: 4px; }
+.analysis-drill:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+td.analysis-drill:hover { filter: brightness(1.25); }
+.analysis-bar-sub { font-size: 10px; color: var(--text-muted); font-weight: 400; }
+
+.analysis-drill-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: var(--accent-glow, var(--bg-tertiary));
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-lg);
+    font-size: 12px;
+    color: var(--text-primary);
+}
+.analysis-drill-banner .lucide { width: 14px; height: 14px; color: var(--accent); }
+.analysis-drill-banner button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm, 4px);
+    padding: 3px 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.analysis-drill-banner button:hover { background: var(--bg-card); color: var(--text-primary); }
+.analysis-drill-banner button:last-child { margin-left: auto; }
+
+.kwic-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.kwic-option input { margin: 0; }
+
 /* Cards flagging a limit in their own data (e.g. text the lexicon cannot read). */
 .analysis-warn {
     font-size: 10px;
@@ -10591,7 +10664,7 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
     letter-spacing: 0.04em;
 }
 .pkg-badge.installed   { background: rgba(52,211,153,0.16); border: 1px solid rgba(52,211,153,0.38); color: var(--success); }
-.pkg-badge.downloading { background: rgba(var(--accent-rgb),0.15); color: var(--accent); }
+.pkg-badge.downloading { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
 .pkg-badge.installing  { background: rgba(251,191,36,0.15); color: #fbbf24; }
 .pkg-badge.error       { background: rgba(239,68,68,0.15); color: var(--red); }
 .pkg-badge.cancelled   { background: var(--bg-tertiary); color: var(--text-muted); }
@@ -10734,7 +10807,7 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
 }
 .library-health-card:hover,
 .library-health-card:focus-visible {
-    border-color: rgba(var(--accent-rgb), 0.55);
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
     background: var(--bg-tertiary);
     box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
     outline: none;
@@ -10743,8 +10816,8 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
     border-color: var(--accent);
     background: var(--bg-secondary);
     box-shadow:
-        0 8px 22px rgba(var(--accent-rgb), 0.16),
-        inset 0 0 0 1px rgba(var(--accent-rgb), 0.22);
+        0 8px 22px color-mix(in srgb, var(--accent) 16%, transparent),
+        inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .library-health-card.active::after {
     content: '';
