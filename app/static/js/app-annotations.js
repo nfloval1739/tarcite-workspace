@@ -2804,6 +2804,7 @@ function renderAnalysisDashboard() {
             <div class="analysis-card analysis-card-wide" data-analysis-card="saturation">${_chartSaturation(items)}</div>
             <div class="analysis-card analysis-card-wide" data-analysis-card="sentiment">${_chartSentiment(items)}</div>
             <div class="analysis-card analysis-card-wide" data-analysis-card="tfidf">${_chartTFIDF(items)}</div>
+            <div class="analysis-card analysis-card-wide" data-analysis-card="exemplars">${_chartExemplars(items)}</div>
             <div class="analysis-card analysis-card-wide" data-analysis-card="irr">${_chartIRR()}</div>
         </div>`;
     refreshIcons(container);
@@ -4263,6 +4264,145 @@ function _chartTFIDF(items, options = {}) {
                     </div>`).join('')}
                 </div>
             </div>`).join('')}
+        </div>`;
+}
+
+/* ── Exemplar quotes ─────────────────────────────────────────────────────────
+   Writing up needs one quotable passage per theme, and finding it meant
+   scrolling the list.  "Representative" is a judgement no tool can make, so the
+   ranking is stated rather than implied: a passage scores by how much of its
+   theme's own distinctive vocabulary it carries — the same TF-IDF weights the
+   card above uses — divided by the square root of its length, because otherwise
+   the longest passage always wins.  It is a starting point for the researcher's
+   eye, not a verdict, and every exemplar names how many candidates it was
+   chosen from so a pick from three is not read as a pick from ninety. */
+
+const EXEMPLAR_MIN_WORDS = 4;     // shorter than this there is nothing to rank
+
+/* An exemplar is a passage someone will paste into a chapter, so it must never
+   be the quote and the note run together the way the other text cards read
+   them: that puts the researcher's own words inside quotation marks attributed
+   to the source.  One passage, one voice.  The Text toggle chooses which voice
+   is eligible; under "Both" the source's words win when there are any, and a
+   note standing in for them is labelled as a note. */
+function _exemplarPassage(a) {
+    const quote = (a.quote || '').trim();
+    const note = (a.comment || '').trim();
+    if (_analysisTextScope === 'quote') return quote ? { text: quote, isNote: false } : null;
+    if (_analysisTextScope === 'comment') return note ? { text: note, isNote: true } : null;
+    if (quote) return { text: quote, isNote: false };
+    return note ? { text: note, isNote: true } : null;
+}
+
+function _exemplarsFor(items) {
+    // Theme vocabularies, and the document frequency that makes a word
+    // distinctive of one theme rather than common to all of them.
+    const themeCorpus = {};
+    items.forEach(a => {
+        const words = _contentWords(_analysisText(a));
+        (a.tags || []).forEach(t => {
+            if (!themeCorpus[t.tag_id]) themeCorpus[t.tag_id] = { ...t, words: [], anns: [] };
+            themeCorpus[t.tag_id].words.push(...words);
+            themeCorpus[t.tag_id].anns.push(a);
+        });
+    });
+    const corpus = Object.values(themeCorpus);
+    if (!corpus.length) return [];
+    const N = corpus.length;
+    const docFreq = {};
+    corpus.forEach(t => new Set(t.words).forEach(w => { docFreq[w] = (docFreq[w] || 0) + 1; }));
+
+    return corpus.map(t => {
+        const tf = {};
+        t.words.forEach(w => { tf[w] = (tf[w] || 0) + 1; });
+        const total = t.words.length || 1;
+        const weight = {};
+        Object.entries(tf).forEach(([w, f]) => {
+            weight[w] = (f / total) * Math.log((N + 1) / (docFreq[w] || 1));
+        });
+        const ranked = t.anns.map(a => {
+            const passage = _exemplarPassage(a);
+            if (!passage) return null;
+            // Ranked on the same text that is displayed, so the score explains
+            // what is on screen rather than a longer string behind it.
+            const words = _contentWords(passage.text);
+            if (words.length < EXEMPLAR_MIN_WORDS) return null;
+            const hits = [...new Set(words)].filter(w => (weight[w] || 0) > 0);
+            const score = hits.reduce((s, w) => s + weight[w], 0) / Math.sqrt(words.length);
+            return { a, ...passage, score, terms: hits.sort((x, y) => weight[y] - weight[x]).slice(0, 5) };
+        }).filter(Boolean).sort((x, y) => y.score - x.score);
+        return { tag: t, candidates: ranked, total: t.anns.length };
+    }).filter(e => e.candidates.length).sort((a, b) => b.total - a.total);
+}
+
+/* Which candidate is on screen per theme, so "Next" can cycle without
+   recomputing the ranking or losing the rest of the dashboard's state. */
+let _exemplarPick = {};
+
+function cycleExemplar(tagId, delta) {
+    const items = _rollupItems(_filteredAnnotations());
+    const e = _exemplarsFor(items).find(x => x.tag.tag_id === tagId);
+    if (!e) return;
+    const cur = _exemplarPick[tagId] || 0;
+    _exemplarPick[tagId] = (cur + delta + e.candidates.length) % e.candidates.length;
+    renderAnalysisDashboard();
+}
+
+function copyExemplar(tagId) {
+    const items = _rollupItems(_filteredAnnotations());
+    const e = _exemplarsFor(items).find(x => x.tag.tag_id === tagId);
+    if (!e) return;
+    const pick = e.candidates[(_exemplarPick[tagId] || 0) % e.candidates.length];
+    const a = pick.a;
+    const cite = `${a.item_title || a.item_key}${a.item_year ? `, ${a.item_year}` : ''}, p. ${(a.page_index || 0) + 1}`;
+    // A note is yours, not the source's, so it is never handed over dressed as
+    // a quotation someone could paste straight into a chapter.
+    const payload = pick.isNote ? `[your note] ${pick.text} — on ${cite}` : `"${pick.text}" (${cite})`;
+    navigator.clipboard?.writeText(payload)
+        .then(() => showCopyToast(pick.isNote ? 'Note copied with source' : 'Quote copied with citation'))
+        .catch(() => showCopyToast('Could not copy'));
+}
+
+function _chartExemplars(items) {
+    const header = `<div class="analysis-card-header"><span>${icon('quote')} Exemplar Quotes</span>` +
+        `<small>the passage carrying most of each theme's distinctive vocabulary · ${_analysisTextScope === 'comment' ? 'your notes' : _analysisTextScope === 'quote' ? 'source quotes only' : 'source quotes, or your note where there is no quote'} · a starting point, not a verdict</small>` +
+        `${_analysisRollupNote()}<div class="analysis-export-actions">` +
+        `<button class="analysis-export-chip" type="button" onclick="exportProjectExemplarsData()" title="Download as CSV">${icon('table-2')} Data</button>` +
+        `</div></div>`;
+    const exemplars = _exemplarsFor(items);
+    if (!exemplars.length) {
+        return header + `<p class="analysis-empty">No coded passage long enough to rank yet — exemplars need at least ${EXEMPLAR_MIN_WORDS} content words.</p>`;
+    }
+    const shown = exemplars.slice(0, 8);
+    return header + `
+        ${_shownOf(shown.length, exemplars.length, 'themes')}
+        <div class="exemplar-list">
+        ${shown.map(e => {
+            const idx = (_exemplarPick[e.tag.tag_id] || 0) % e.candidates.length;
+            const pick = e.candidates[idx];
+            const a = pick.a;
+            const text = pick.text.length > 320 ? pick.text.slice(0, 317) + '…' : pick.text;
+            const thin = e.candidates.length < 3;
+            return `
+            <div class="exemplar">
+                <div class="exemplar-head">
+                    <button type="button" class="exemplar-theme" style="color:${e.tag.color || 'var(--accent)'}"
+                            onclick="drillIntoTheme(${e.tag.tag_id})" title="Show all annotations under this theme">${escapeHtml(e.tag.name)}</button>
+                    <small>${idx + 1} of ${e.candidates.length} candidate${e.candidates.length !== 1 ? 's' : ''}${
+                        thin ? ' — too few to rank meaningfully' : ''}</small>
+                    <span class="exemplar-actions">
+                        ${e.candidates.length > 1 ? `<button type="button" onclick="cycleExemplar(${e.tag.tag_id}, 1)" title="Next candidate">${icon('chevron-right')}</button>` : ''}
+                        <button type="button" onclick="copyExemplar(${e.tag.tag_id})" title="Copy quote with citation">${icon('copy')}</button>
+                    </span>
+                </div>
+                <blockquote class="exemplar-quote${pick.isNote ? ' exemplar-note' : ''}">${escapeHtml(text)}</blockquote>
+                <div class="exemplar-cite">
+                    ${pick.isNote ? '<span class="exemplar-isnote">your note</span>' : ''}
+                    ${escapeHtml(a.item_title || a.item_key)}${a.item_year ? ` · ${a.item_year}` : ''} · p. ${(a.page_index || 0) + 1}
+                    ${pick.terms.length ? `<span class="exemplar-terms">matched: ${pick.terms.map(t => escapeHtml(t)).join(', ')}</span>` : ''}
+                </div>
+            </div>`;
+        }).join('')}
         </div>`;
 }
 

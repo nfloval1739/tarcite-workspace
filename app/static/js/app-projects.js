@@ -783,6 +783,24 @@ function exportProjectSaturationData() {
     ]), 'text/csv;charset=utf-8;');
 }
 
+/* Every ranked candidate, not just the one on screen: the card shows one
+   exemplar per theme, but choosing between them is the researcher's job and the
+   file is where that choice gets made. */
+function exportProjectExemplarsData() {
+    const exemplars = _exemplarsFor(_projectAnalysisAnnotations());
+    if (!exemplars.length) { alert('No exemplar quotes to export.'); return; }
+    const rows = exemplars.flatMap(e => e.candidates.map((c, i) => [
+        e.tag.name, i + 1, e.candidates.length, c.score.toFixed(4),
+        c.terms.join('; '), c.text,
+        c.a.item_title || c.a.item_key, c.a.item_year || '', (c.a.page_index || 0) + 1,
+        c.a.annotation_id,
+    ]));
+    _downloadTextFile(`exemplar_quotes_${_projectAnalysisSlug()}_${_exportDateStamp()}.csv`, '﻿' + _csv([
+        ['theme', 'rank', 'candidates_in_theme', 'score', 'matched_terms', 'text', 'source', 'year', 'page', 'annotation_id'],
+        ...rows,
+    ]), 'text/csv;charset=utf-8;');
+}
+
 function exportProjectSaturationSvg() {
     const svg = _analysisCardSvg("saturation");
     if (!svg) { alert('No saturation SVG to export.'); return; }
