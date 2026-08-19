@@ -10004,26 +10004,70 @@ td.analysis-drill:hover { filter: brightness(1.25); }
 /* ── Statistical analysis cards ──────────────────────────────────────────── */
 
 /* Saturation curve */
-.saturation-stats {
+.saturation-stats,
+.coverage-stats {
     display: flex;
     gap: 24px;
     margin-top: 10px;
     padding-top: 10px;
     border-top: 1px solid var(--border);
 }
-.saturation-stat {
+.coverage-stats { flex-wrap: wrap; }
+.saturation-stat,
+.coverage-stat {
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
-.saturation-stat span {
+.saturation-stat span,
+.coverage-stat span {
     font-size: 1.1rem;
     font-weight: 600;
     color: var(--text-primary);
 }
-.saturation-stat small {
+.saturation-stat small,
+.coverage-stat small {
     font-size: 0.72rem;
     color: var(--text-muted);
+}
+
+/* Coding coverage */
+.coverage-headline {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+.coverage-pct {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+}
+.coverage-bar {
+    flex: 1;
+    height: 10px;
+    border-radius: 5px;
+    background: var(--bg-input, rgba(127, 127, 127, 0.18));
+    overflow: hidden;
+}
+.coverage-bar span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+}
+button.coverage-stat {
+    background: none;
+    border: none;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+}
+button.coverage-stat:hover span { text-decoration: underline; }
+.coverage-note {
+    margin: 10px 0 0;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
 }
 
 /* Sentiment */

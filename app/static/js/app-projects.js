@@ -644,27 +644,21 @@ function _networkDataFromAnnotations(items) {
     };
 }
 
+/* Rows for the saturation CSV, taken from the same series the curve is drawn
+   from.  This used to re-derive them, ordering by annotation_id — import order,
+   not reading order — so the exported "cumulative_themes" column described a
+   different corpus from the chart it sits under. */
 function _saturationRows(items) {
-    const sorted = [...items].sort((a, b) => a.annotation_id - b.annotation_id);
-    const seen = new Set();
-    return sorted.map((a, i) => {
-        const before = seen.size;
-        const tags = a.tags || [];
-        const beforeIds = new Set(seen);
-        tags.forEach(t => seen.add(t.tag_id));
-        const after = seen.size;
-        const newThemes = tags.filter(t => !beforeIds.has(t.tag_id));
-        return {
-            annotation_index: i + 1,
-            annotation_id: a.annotation_id,
-            source: a.item_title || a.item_key,
-            page: (a.page_index || 0) + 1,
-            themes_on_annotation: tags.map(t => t.name).join('; '),
-            new_themes: newThemes.map(t => t.name).join('; '),
-            new_theme_count: Math.max(0, after - before),
-            cumulative_themes: after,
-        };
-    });
+    return _saturationSeries(items).rows.map(r => ({
+        annotation_index: r.n,
+        annotation_id: r.annotation.annotation_id,
+        source: r.annotation.item_title || r.annotation.item_key,
+        page: (r.annotation.page_index || 0) + 1,
+        themes_on_annotation: (r.annotation.tags || []).map(t => t.name).join('; '),
+        new_themes: r.newThemes.map(t => t.name).join('; '),
+        new_theme_count: r.newThemes.length,
+        cumulative_themes: r.total,
+    }));
 }
 
 function exportProjectAnalysisData() {

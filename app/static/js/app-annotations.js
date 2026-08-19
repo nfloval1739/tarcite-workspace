@@ -2630,11 +2630,14 @@ function switchAnnotationsMode(mode) {
    is an AND of ORs, which is what a drill-down needs — "an annotation under
    this theme's subtree AND under that one's" for a co-occurrence pair. */
 function _matchesAnnotationFilter(a, filter = {}) {
-    const { tagIds = [], tagGroups = [], type = '', search = '', itemKey = '' } = filter;
+    const { tagIds = [], tagGroups = [], type = '', search = '', itemKey = '', untagged = false } = filter;
     if (type && a.annotation_type !== type) return false;
     if (itemKey && a.item_key !== itemKey) return false;
 
     const ids = (a.tags || []).map(t => t.tag_id);
+    // The coverage card drills into the annotations no theme has been applied
+    // to, which no combination of the theme filters can express.
+    if (untagged && ids.length) return false;
     if (tagIds.length && !tagIds.some(id => ids.includes(id))) return false;
     if (tagGroups.length && !tagGroups.every(group => group.some(id => ids.includes(id)))) return false;
 
@@ -2685,6 +2688,7 @@ function drillIntoAnalysis(patch, label) {
         ...appState.annotationsViewFilter,
         tagGroups: [],
         itemKey: '',
+        untagged: false,
         ...patch,
     };
     appState.annotationsViewDrill = label;
@@ -2710,6 +2714,14 @@ function drillIntoType(type) {
     drillIntoAnalysis({ type }, `Type: ${type}`);
 }
 
+function drillIntoUncoded() {
+    drillIntoAnalysis({ untagged: true }, 'Uncoded — no theme applied');
+}
+
+function drillIntoDocument(itemKey, docTitle) {
+    drillIntoAnalysis({ itemKey }, `Document: ${docTitle || itemKey}`);
+}
+
 function drillIntoThemeDocument(tagId, itemKey, docTitle) {
     drillIntoAnalysis(
         { tagGroups: [_themeSubtreeIds(tagId)], itemKey },
@@ -2724,7 +2736,7 @@ function drillIntoWord(word, tagId) {
 
 function clearAnalysisDrill() {
     appState.annotationsViewDrill = '';
-    appState.annotationsViewFilter = { ...appState.annotationsViewFilter, tagGroups: [], itemKey: '', search: '' };
+    appState.annotationsViewFilter = { ...appState.annotationsViewFilter, tagGroups: [], itemKey: '', search: '', untagged: false };
     const searchInput = document.getElementById('notes-search-input');
     if (searchInput) searchInput.value = '';
     renderAnnotationsView();
@@ -2779,6 +2791,7 @@ function renderAnalysisDashboard() {
             <small class="analysis-toolbar-hint">word frequency, TF-IDF, sentiment and KWIC read ${ANALYSIS_TEXT_SCOPE_LABELS[_analysisTextScope]}</small>
         </div>
         <div class="analysis-grid">
+            <div class="analysis-card analysis-card-wide" data-analysis-card="coverage">${_chartCoverage(items)}</div>
             <div class="analysis-card" data-analysis-card="theme-frequency">${_chartThemeFrequency(items)}</div>
             <div class="analysis-card" data-analysis-card="annotation-type">${_chartAnnotationType(items)}</div>
             <div class="analysis-card analysis-card-wide" data-analysis-card="annotations-over-time">${_chartAnnotationsOverTime(items)}</div>
@@ -2795,6 +2808,56 @@ function renderAnalysisDashboard() {
         </div>`;
     refreshIcons(container);
     _initNetworkGraph(items);
+}
+
+/* ── Coding coverage ─────────────────────────────────────────────────────────
+   Every theme-based card silently drops the annotations no theme was applied
+   to, while the view header counts all of them.  On a corpus that is half
+   uncoded that makes the tallest bar in Theme Frequency a share of a
+   denominator nothing on screen names.  This card states the denominators, and
+   makes the uncoded set reachable instead of invisible. */
+function _chartCoverage(items) {
+    const header = `<div class="analysis-card-header"><span>${icon('check-circle')} Coding Coverage</span><small>how much of the current selection carries a theme</small></div>`;
+    if (!items.length) return header + `<p class="analysis-empty">No annotations in this selection.</p>`;
+
+    const coded = items.filter(a => (a.tags || []).length);
+    const uncoded = items.length - coded.length;
+    const pct = Math.round((coded.length / items.length) * 100);
+
+    // Documents that have been read but not yet coded are where the uncoded
+    // annotations are concentrated, and the useful unit for planning a session.
+    const docs = new Map();
+    items.forEach(a => {
+        const d = docs.get(a.item_key) || { title: a.item_title || a.item_key, n: 0, coded: 0 };
+        d.n++;
+        if ((a.tags || []).length) d.coded++;
+        docs.set(a.item_key, d);
+    });
+    const uncodedDocs = [...docs.values()].filter(d => !d.coded);
+
+    /* Codebook coverage is measured against the codebook as authored, so it
+       reads leaf-level tags rather than the rolled-up items — folding every
+       theme into its parent would report a codebook of a handful of roots. */
+    const used = new Set();
+    _filteredAnnotations().forEach(a => (a.tags || []).forEach(t => used.add(t.tag_id)));
+    const unused = (appState.allTags || []).filter(t => !used.has(t.tag_id));
+
+    const barColour = pct >= 80 ? '#22c55e' : pct >= 40 ? 'var(--accent)' : '#f59e0b';
+    return header + `
+        <div class="coverage-headline">
+            <span class="coverage-pct" style="color:${barColour}">${pct}%</span>
+            <span class="coverage-bar"><span style="width:${pct}%;background:${barColour}"></span></span>
+        </div>
+        <div class="coverage-stats">
+            <div class="coverage-stat"><span>${coded.length}</span><small>annotations carry a theme</small></div>
+            ${uncoded ? `<button type="button" class="coverage-stat" onclick="drillIntoUncoded()" title="Show these annotations">
+                <span>${uncoded}</span><small>uncoded — click to review</small></button>` : ''}
+            <div class="coverage-stat"><span>${docs.size}</span><small>document${docs.size !== 1 ? 's' : ''} with annotations</small></div>
+            ${uncodedDocs.length ? `<div class="coverage-stat"><span>${uncodedDocs.length}</span><small>document${uncodedDocs.length !== 1 ? 's' : ''} annotated but not coded</small></div>` : ''}
+            ${unused.length ? `<div class="coverage-stat"><span>${unused.length}</span><small>theme${unused.length !== 1 ? 's' : ''} in the codebook never used</small></div>` : ''}
+        </div>
+        ${uncoded ? `<p class="coverage-note">Theme frequency, co-occurrence, the document matrix, the network, TF-IDF and saturation are computed over the <strong>${coded.length}</strong> coded annotation${coded.length !== 1 ? 's' : ''}. Word frequency, sentiment, KWIC, annotation types, coding density and the timeline read all <strong>${items.length}</strong>.</p>` : ''}
+        ${unused.length ? `<p class="coverage-note">Never used: ${unused.slice(0, 12).map(t => `<span style="color:${t.color || 'var(--accent)'}">${escapeHtml(t.name)}</span>`).join(', ')}${unused.length > 12 ? ` and ${unused.length - 12} more` : ''}.</p>` : ''}`;
 }
 
 function _chartThemeFrequency(items, options = {}) {
@@ -3920,38 +3983,71 @@ function _scoreSentiment(text) {
     return score > 0 ? 'pos' : score < 0 ? 'neg' : 'neu';
 }
 
-function _chartSaturation(items, options = {}) {
-    if (!items.length) return `<div class="analysis-card-header"><span>${icon('activity')} Theme Saturation Curve</span></div><p class="analysis-empty">No annotations yet.</p>`;
-    /* Coding order, best available: created_at when the annotation carries it,
-       falling back to the autoincrement id.  Ids alone mis-order any corpus
-       that was bulk-imported, because they are assigned at import time rather
-       than in the order the researcher actually read. */
+/* Coding order, best available: created_at when the annotation carries it,
+   falling back to the autoincrement id.  Ids alone mis-order any corpus that
+   was bulk-imported, because they are assigned at import time rather than in
+   the order the researcher actually read. */
+function _codingOrder(items) {
     const orderKey = a => {
         const t = a.created_at ? Date.parse(a.created_at) : NaN;
         return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER;
     };
-    const sorted = [...items].sort((a, b) => (orderKey(a) - orderKey(b)) || (a.annotation_id - b.annotation_id));
+    return [...items].sort((a, b) => (orderKey(a) - orderKey(b)) || (a.annotation_id - b.annotation_id));
+}
+
+/* One saturation series behind the curve, the CSV export and the report.  They
+   carried two derivations that disagreed: the CSV ordered by annotation_id,
+   which is import order rather than reading order, so its "cumulative themes"
+   column described a different corpus from the chart above it.
+
+   Uncoded annotations are excluded, and that is the substantive part.  An
+   annotation with no theme cannot introduce one, so leaving them in means every
+   uncoded annotation silently extends the flat run that the saturation verdict
+   is read off.  On a corpus that is half uncoded this manufactures the verdict
+   outright: the same library reported "Saturated · after 90% of annotations"
+   with them, and a new theme at the second-to-last coded annotation without.
+   Saturation is a claim about when new concepts stopped appearing, so it is
+   measured over the annotations that were actually coded; the uncoded ones are
+   evidence about coding progress, which the coverage card reports instead. */
+function _saturationSeries(items) {
+    const coded = _codingOrder(items).filter(a => (a.tags || []).length);
     const seen = new Set();
-    const data = sorted.map((a, i) => {
-        (a.tags || []).forEach(t => seen.add(t.tag_id));
-        return { n: i + 1, total: seen.size };
+    const rows = coded.map((a, i) => {
+        const before = new Set(seen);
+        const tags = a.tags || [];
+        tags.forEach(t => seen.add(t.tag_id));
+        return {
+            n: i + 1, total: seen.size, annotation: a,
+            newThemes: tags.filter(t => !before.has(t.tag_id)),
+        };
     });
-    const maxT = data[data.length - 1].total;
-    if (!maxT) return `<div class="analysis-card-header"><span>${icon('activity')} Theme Saturation Curve</span></div><p class="analysis-empty">No themed annotations yet.</p>`;
-
     let lastNew = 0, prev = 0;
-    data.forEach((d, i) => { if (d.total > prev) { lastNew = i; prev = d.total; } });
+    rows.forEach((d, i) => { if (d.total > prev) { lastNew = i; prev = d.total; } });
 
-    /* Saturation needs a *run* of annotations that added nothing new.  The old
-       test was `lastNew < data.length - 1`, i.e. one single trailing annotation
+    /* Saturation needs a *run* of annotations that added nothing new.  An older
+       test was `lastNew < rows.length - 1`, i.e. one single trailing annotation
        with no new theme flipped the verdict to "Saturated" — which it then
        reported as a confident percentage.  Require a tail of at least 10% of
-       the corpus (minimum 5 annotations), and refuse to judge a corpus too
-       small to say anything about. */
-    const sinceLastNew = data.length - 1 - lastNew;
-    const window = Math.max(5, Math.ceil(data.length * 0.1));
-    const tooSmall = data.length < 15;
-    const isSat = !tooSmall && sinceLastNew >= window;
+       the coded corpus (minimum 5), and refuse to judge one too small to say
+       anything about. */
+    const sinceLastNew = rows.length ? rows.length - 1 - lastNew : 0;
+    const window = Math.max(5, Math.ceil(rows.length * 0.1));
+    const tooSmall = rows.length < 15;
+    return {
+        rows, lastNew, sinceLastNew, window, tooSmall,
+        themes: rows.length ? rows[rows.length - 1].total : 0,
+        coded: rows.length, total: items.length, uncoded: items.length - rows.length,
+        isSat: !tooSmall && sinceLastNew >= window,
+    };
+}
+
+function _chartSaturation(items, options = {}) {
+    if (!items.length) return `<div class="analysis-card-header"><span>${icon('activity')} Theme Saturation Curve</span></div><p class="analysis-empty">No annotations yet.</p>`;
+    const series = _saturationSeries(items);
+    const { rows, lastNew, sinceLastNew, window, tooSmall, isSat, uncoded } = series;
+    const data = rows;
+    const maxT = series.themes;
+    if (!maxT) return `<div class="analysis-card-header"><span>${icon('activity')} Theme Saturation Curve</span></div><p class="analysis-empty">No themed annotations yet.</p>`;
 
     const W = 520, H = 110, PL = 28, PR = 6, PT = 10, PB = 18;
     const cW = W - PL - PR, cH = H - PT - PB;
@@ -3991,7 +4087,8 @@ function _chartSaturation(items, options = {}) {
     return `
         <div class="analysis-card-header">
             <span>${icon('activity')} Theme Saturation Curve</span>
-            <small>cumulative new themes in coding order · saturation = no new theme for ${window}+ consecutive annotations</small>${_analysisRollupNote()}
+            <small>cumulative new themes in coding order · saturation = no new theme for ${window}+ consecutive coded annotations${
+                uncoded ? ` · measured over the ${data.length} coded annotation${data.length !== 1 ? 's' : ''}, ${uncoded} uncoded excluded` : ''}</small>${_analysisRollupNote()}
             ${exportActions}
         </div>
         <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
@@ -4001,16 +4098,16 @@ function _chartSaturation(items, options = {}) {
             ${satLine}
             <text x="${PL}" y="${H - 2}" font-size="8" fill="${cMuted}">1</text>
             <text x="${W - PR}" y="${H - 2}" text-anchor="end" font-size="8" fill="${cMuted}">${data.length}</text>
-            <text x="${(W + PL - PR) / 2}" y="${H - 2}" text-anchor="middle" font-size="8" fill="${cMuted}">annotation #</text>
+            <text x="${(W + PL - PR) / 2}" y="${H - 2}" text-anchor="middle" font-size="8" fill="${cMuted}">coded annotation #</text>
         </svg></div>
         <div class="saturation-stats">
             <div class="saturation-stat"><span>${maxT}</span><small>${_analysisRollup === 'root' ? 'top-level themes used' : 'themes used (as coded)'}</small></div>
             <div class="saturation-stat"><span>#${lastNew + 1} / ${data.length}</span><small>last new theme introduced at</small></div>
-            <div class="saturation-stat"><span>${sinceLastNew}</span><small>annotations since, criterion &ge; ${window}</small></div>
+            <div class="saturation-stat"><span>${sinceLastNew}</span><small>coded annotations since, criterion &ge; ${window}</small></div>
             <div class="saturation-stat"><span style="color:${tooSmall ? 'var(--text-muted)' : isSat ? '#22c55e' : 'var(--accent)'}">${
                 tooSmall ? 'Too early' : isSat ? 'Saturated' : 'In progress'}</span><small>${
-                tooSmall ? `need ≥ 15 annotations to judge (have ${data.length})`
-                : isSat ? `no new theme in the last ${sinceLastNew} annotations`
+                tooSmall ? `need ≥ 15 coded annotations to judge (have ${data.length})`
+                : isSat ? `no new theme in the last ${sinceLastNew} coded annotations`
                 : `${window - sinceLastNew} more without a new theme to qualify`}</small></div>
         </div>`;
 }
