@@ -789,7 +789,7 @@ function toggleTagFilter(e, tagId) {
 }
 
 function clearAnnotationsFilter() {
-    appState.annotationsViewFilter = { tagIds: [], tagGroups: [], type: '', search: '', itemKey: '', untagged: false };
+    appState.annotationsViewFilter = { tagIds: [], tagGroups: [], type: '', search: '', itemKey: '', untagged: false, yearKey: '' };
     appState.annotationsViewDrill = '';
     document.querySelectorAll('.notes-type-btn').forEach(b => b.classList.remove('active'));
     document.querySelector('.notes-type-btn[data-type=""]')?.classList.add('active');
@@ -2630,9 +2630,11 @@ function switchAnnotationsMode(mode) {
    is an AND of ORs, which is what a drill-down needs — "an annotation under
    this theme's subtree AND under that one's" for a co-occurrence pair. */
 function _matchesAnnotationFilter(a, filter = {}) {
-    const { tagIds = [], tagGroups = [], type = '', search = '', itemKey = '', untagged = false } = filter;
+    const { tagIds = [], tagGroups = [], type = '', search = '', itemKey = '', untagged = false, yearKey = '' } = filter;
     if (type && a.annotation_type !== type) return false;
     if (itemKey && a.item_key !== itemKey) return false;
+    // Year drill-downs from the matrix, including its undated column.
+    if (yearKey && (String(a.item_year || '').trim() || MATRIX_NO_YEAR) !== yearKey) return false;
 
     const ids = (a.tags || []).map(t => t.tag_id);
     // The coverage card drills into the annotations no theme has been applied
@@ -2689,6 +2691,7 @@ function drillIntoAnalysis(patch, label) {
         tagGroups: [],
         itemKey: '',
         untagged: false,
+        yearKey: '',
         ...patch,
     };
     appState.annotationsViewDrill = label;
@@ -2728,6 +2731,14 @@ function drillIntoThemeDocument(tagId, itemKey, docTitle) {
         `${_themeName(tagId)} in ${docTitle || itemKey}`);
 }
 
+// One matrix cell, whichever way its columns are grouped.
+function drillIntoThemeGroup(tagId, mode, key, label) {
+    if (mode === 'document') return drillIntoThemeDocument(tagId, key, label);
+    const patch = { tagGroups: [_themeSubtreeIds(tagId)] };
+    if (mode === 'year') patch.yearKey = key; else patch.type = key;
+    drillIntoAnalysis(patch, `${_themeName(tagId)} in ${label || key}`);
+}
+
 function drillIntoWord(word, tagId) {
     drillIntoAnalysis(
         tagId ? { search: word.toLowerCase(), tagGroups: [_themeSubtreeIds(tagId)] } : { search: word.toLowerCase() },
@@ -2736,7 +2747,7 @@ function drillIntoWord(word, tagId) {
 
 function clearAnalysisDrill() {
     appState.annotationsViewDrill = '';
-    appState.annotationsViewFilter = { ...appState.annotationsViewFilter, tagGroups: [], itemKey: '', search: '', untagged: false };
+    appState.annotationsViewFilter = { ...appState.annotationsViewFilter, tagGroups: [], itemKey: '', search: '', untagged: false, yearKey: '' };
     const searchInput = document.getElementById('notes-search-input');
     if (searchInput) searchInput.value = '';
     renderAnnotationsView();
@@ -3253,6 +3264,57 @@ function _chartCoOccurrence(items) {
         </div>`;
 }
 
+/* ── Matrix grouping ─────────────────────────────────────────────────────────
+   The matrix answered "which paper is this theme in", which describes the
+   corpus.  Grouping the same counts by year or by annotation type asks whether
+   a theme is a recent preoccupation or a constant, and whether it lives in the
+   quotes or in the notes — comparative questions, from data already in hand.
+   One grouping function serves the chart and the CSV so the file cannot end up
+   describing a different split from the picture above it. */
+
+const MATRIX_NO_YEAR = '(no year)';
+const MATRIX_GROUP_LABELS = { document: 'Document', year: 'Year', type: 'Type' };
+let _matrixGroupBy = 'document';
+
+function setMatrixGroupBy(mode) {
+    _matrixGroupBy = MATRIX_GROUP_LABELS[mode] ? mode : 'document';
+    if (appState.activeCenterView === 'annotations') renderAnalysisDashboard();
+    if (appState.activeProject) renderProjectDetail(appState.activeProject);
+}
+
+function _matrixGroupOf(a, mode = _matrixGroupBy) {
+    if (mode === 'year') {
+        const y = String(a.item_year || '').trim();
+        return { key: y || MATRIX_NO_YEAR, label: y || MATRIX_NO_YEAR };
+    }
+    if (mode === 'type') {
+        const t = a.annotation_type || 'unknown';
+        return { key: t, label: t };
+    }
+    return { key: a.item_key, label: a.item_title || a.item_key };
+}
+
+/* Documents and types rank by how much coding they carry — the previous code
+   took the *first* eight encountered, which since the API orders by item_key
+   was the eight lexicographically smallest, a stable but meaningless subset.
+   Years instead run in time order, because a trend read out of sequence is not
+   a trend; the undated group sits at the end rather than being dropped. */
+function _matrixGroups(items, mode = _matrixGroupBy) {
+    const labels = {}, counts = {};
+    items.forEach(a => {
+        const { key, label } = _matrixGroupOf(a, mode);
+        if (!(key in labels)) labels[key] = label;
+        counts[key] = (counts[key] || 0) + 1;
+    });
+    const entries = Object.entries(labels);
+    if (mode === 'year') {
+        entries.sort((a, b) => (a[0] === MATRIX_NO_YEAR) - (b[0] === MATRIX_NO_YEAR) || a[0].localeCompare(b[0]));
+    } else {
+        entries.sort((a, b) => (counts[b[0]] || 0) - (counts[a[0]] || 0));
+    }
+    return { entries, counts, labels };
+}
+
 function _chartDocumentMatrix(items, options = {}) {
     const themeCounts = {};
     items.forEach(a => (a.tags || []).forEach(t => {
@@ -3262,25 +3324,18 @@ function _chartDocumentMatrix(items, options = {}) {
     const allThemes = Object.values(themeCounts).sort((a, b) => b.c - a.c);
     const topThemes = allThemes.slice(0, 10);
 
-    /* Documents were previously the *first* eight encountered.  The API returns
-       annotations ordered by item_key, so that was the eight lexicographically
-       smallest keys — a stable but meaningless subset that could omit the
-       documents holding almost all of the coding.  Rank them by how much coding
-       they actually carry. */
-    const docsMap = {};
-    const docCounts = {};
-    items.forEach(a => {
-        if (!docsMap[a.item_key]) docsMap[a.item_key] = a.item_title || a.item_key;
-        docCounts[a.item_key] = (docCounts[a.item_key] || 0) + 1;
-    });
-    const allDocs = Object.entries(docsMap).sort((a, b) => (docCounts[b[0]] || 0) - (docCounts[a[0]] || 0));
-    const topDocs = allDocs.slice(0, 8);
-    if (!topThemes.length || !topDocs.length) return `<div class="analysis-card-header"><span>Theme × Document Matrix</span></div><p class="analysis-empty">Not enough data.</p>`;
+    const mode = _matrixGroupBy;
+    const { entries: allDocs, labels: docsMap } = _matrixGroups(items, mode);
+    // Years are shown whole: a trend with a decade missing from the middle is a
+    // different claim from the one the data supports.
+    const topDocs = mode === 'year' ? allDocs : allDocs.slice(0, 8);
+    if (!topThemes.length || !topDocs.length) return `<div class="analysis-card-header"><span>Theme × ${MATRIX_GROUP_LABELS[mode]} Matrix</span></div><p class="analysis-empty">Not enough data.</p>`;
 
     const matrix = {};
     items.forEach(a => (a.tags || []).forEach(t => {
         if (!matrix[t.tag_id]) matrix[t.tag_id] = {};
-        matrix[t.tag_id][a.item_key] = (matrix[t.tag_id][a.item_key] || 0) + 1;
+        const k = _matrixGroupOf(a, mode).key;
+        matrix[t.tag_id][k] = (matrix[t.tag_id][k] || 0) + 1;
     }));
     const maxVal = Math.max(1, ...topThemes.flatMap(t => topDocs.map(([k]) => matrix[t.tag_id]?.[k] || 0)));
     const short = s => s.length > 14 ? s.slice(0, 13) + '…' : s;
@@ -3291,10 +3346,17 @@ function _chartDocumentMatrix(items, options = {}) {
         <button class="analysis-export-chip" type="button" onclick="exportProjectDocumentMatrixPng()" title="Download as PNG">${icon('image')} PNG</button>
     </div>`;
     return `
-        <div class="analysis-card-header"><span>${icon('grid')} Theme × Document Matrix</span><small>annotation count per theme per paper · most-coded first${
+        <div class="analysis-card-header"><span>${icon('grid')} Theme × ${MATRIX_GROUP_LABELS[mode]} Matrix</span><small>annotation count per theme per ${
+            mode === 'year' ? 'year of publication · in time order' : mode === 'type' ? 'annotation type · most-coded first' : 'paper · most-coded first'
+        }${
             (topThemes.length < allThemes.length || topDocs.length < allDocs.length)
-                ? ` · showing ${topThemes.length}/${allThemes.length} themes × ${topDocs.length}/${allDocs.length} documents` : ''
-        }</small>${exportBtnMatrix}</div>
+                ? ` · showing ${topThemes.length}/${allThemes.length} themes × ${topDocs.length}/${allDocs.length} ${mode === 'document' ? 'documents' : mode + 's'}` : ''
+        }</small>
+        <div class="matrix-groupby" role="group" aria-label="Group columns by">
+            ${Object.entries(MATRIX_GROUP_LABELS).map(([k, label]) => `
+            <button class="analysis-rollup-btn${mode === k ? ' active' : ''}" type="button"
+                    onclick="setMatrixGroupBy('${k}')" title="Group columns by ${label.toLowerCase()}">${label}</button>`).join('')}
+        </div>${exportBtnMatrix}</div>
         <div class="heatmap-scroll">
             <table class="heatmap-table">
                 <thead><tr>
@@ -3309,7 +3371,7 @@ function _chartDocumentMatrix(items, options = {}) {
                             const intensity = (v / maxVal * 0.75 + (v ? 0.1 : 0)).toFixed(2);
                             const title = docsMap[k] || k;
                             return `<td class="heatmap-cell${v ? ' analysis-drill' : ''}" title="${v} annotation${v!==1?'s':''}${v ? ' — click to show them' : ''}"${
-                                v ? ` role="button" tabindex="0" onclick="drillIntoThemeDocument(${t.tag_id}, '${escapeJs(k)}', '${escapeJs(title)}')"` : ''}>
+                                v ? ` role="button" tabindex="0" onclick="drillIntoThemeGroup(${t.tag_id}, '${escapeJs(mode)}', '${escapeJs(k)}', '${escapeJs(title)}')"` : ''}>
                                 <div class="heatmap-fill" style="opacity:${intensity};background:${t.color||'var(--accent)'}"></div>
                                 <span class="heatmap-val">${v || ''}</span>
                             </td>`;
@@ -4431,6 +4493,7 @@ function _filterLabel(f = {}) {
     (f.tagGroups || []).forEach(g => parts.push(g.length === 1 ? _themeName(g[0]) : `${_themeName(g[0])} +`));
     if (f.type) parts.push(f.type);
     if (f.itemKey) parts.push((appState.annotationsViewItems || []).find(a => a.item_key === f.itemKey)?.item_title || f.itemKey);
+    if (f.yearKey) parts.push(f.yearKey);
     if (f.search) parts.push(`"${f.search}"`);
     return parts.join(' · ') || 'whole library';
 }

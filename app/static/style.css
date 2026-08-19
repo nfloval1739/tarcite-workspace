@@ -11395,3 +11395,9 @@ button.coverage-stat:hover span { text-decoration: underline; }
 .ab-row-diff { text-align: right; font-variant-numeric: tabular-nums; }
 .ab-row-diff.to-a { color: #6366f1; }
 .ab-row-diff.to-b { color: #14b8a6; }
+
+.matrix-groupby {
+    display: inline-flex;
+    gap: 2px;
+    margin-left: auto;
+}

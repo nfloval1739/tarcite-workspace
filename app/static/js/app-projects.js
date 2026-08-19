@@ -1093,19 +1093,19 @@ function exportProjectDocumentMatrixData() {
         themeCounts[t.tag_id].c++;
     }));
     const topThemes = Object.values(themeCounts).sort((a, b) => b.c - a.c).slice(0, 20);
-    const docsMap = {};
-    items.forEach(a => { if (!docsMap[a.item_key]) docsMap[a.item_key] = a.item_title || a.item_key; });
-    const topDocs = Object.entries(docsMap);
+    // Same grouping the card is showing, so the file matches the picture.
+    const topDocs = _matrixGroups(items).entries;
     if (!topThemes.length || !topDocs.length) { alert('Not enough data to export matrix.'); return; }
     const matrix = {};
     items.forEach(a => (a.tags || []).forEach(t => {
         if (!matrix[t.tag_id]) matrix[t.tag_id] = {};
-        matrix[t.tag_id][a.item_key] = (matrix[t.tag_id][a.item_key] || 0) + 1;
+        const k = _matrixGroupOf(a).key;
+        matrix[t.tag_id][k] = (matrix[t.tag_id][k] || 0) + 1;
     }));
     const header = ['theme', ...topDocs.map(([, title]) => title)];
     const rows = topThemes.map(t => [t.name, ...topDocs.map(([k]) => matrix[t.tag_id]?.[k] || 0)]);
     _downloadTextFile(
-        `theme_document_matrix_${_projectAnalysisSlug()}_${_exportDateStamp()}.csv`,
+        `theme_${_matrixGroupBy}_matrix_${_projectAnalysisSlug()}_${_exportDateStamp()}.csv`,
         '﻿' + _csv([header, ...rows]),
         'text/csv;charset=utf-8;',
     );
