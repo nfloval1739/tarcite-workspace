@@ -801,6 +801,21 @@ function exportProjectExemplarsData() {
     ]), 'text/csv;charset=utf-8;');
 }
 
+/* Both selections' labels travel with the numbers: a comparison CSV that does
+   not say what A and B were is unreadable a week later. */
+function exportProjectComparisonData() {
+    const { rows, codedA, codedB, overlap } = _comparisonRows();
+    if (!rows.length) { alert('Capture two selections first.'); return; }
+    _downloadTextFile(`theme_comparison_${_projectAnalysisSlug()}_${_exportDateStamp()}.csv`, '﻿' + _csv([
+        ['selection_a', _abSets.A?.label || '', 'coded_annotations_a', codedA],
+        ['selection_b', _abSets.B?.label || '', 'coded_annotations_b', codedB],
+        ['annotations_in_both', overlap],
+        [],
+        ['theme', 'count_a', 'share_a_pct', 'count_b', 'share_b_pct', 'difference_pp'],
+        ...rows.map(r => [r.tag.name, r.nA, r.pA.toFixed(1), r.nB, r.pB.toFixed(1), r.diff.toFixed(1)]),
+    ]), 'text/csv;charset=utf-8;');
+}
+
 function exportProjectSaturationSvg() {
     const svg = _analysisCardSvg("saturation");
     if (!svg) { alert('No saturation SVG to export.'); return; }

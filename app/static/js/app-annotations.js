@@ -789,7 +789,7 @@ function toggleTagFilter(e, tagId) {
 }
 
 function clearAnnotationsFilter() {
-    appState.annotationsViewFilter = { tagIds: [], tagGroups: [], type: '', search: '', itemKey: '' };
+    appState.annotationsViewFilter = { tagIds: [], tagGroups: [], type: '', search: '', itemKey: '', untagged: false };
     appState.annotationsViewDrill = '';
     document.querySelectorAll('.notes-type-btn').forEach(b => b.classList.remove('active'));
     document.querySelector('.notes-type-btn[data-type=""]')?.classList.add('active');
@@ -2805,6 +2805,7 @@ function renderAnalysisDashboard() {
             <div class="analysis-card analysis-card-wide" data-analysis-card="sentiment">${_chartSentiment(items)}</div>
             <div class="analysis-card analysis-card-wide" data-analysis-card="tfidf">${_chartTFIDF(items)}</div>
             <div class="analysis-card analysis-card-wide" data-analysis-card="exemplars">${_chartExemplars(items)}</div>
+            <div class="analysis-card analysis-card-wide" data-analysis-card="comparison">${_chartComparison()}</div>
             <div class="analysis-card analysis-card-wide" data-analysis-card="irr">${_chartIRR()}</div>
         </div>`;
     refreshIcons(container);
@@ -4401,6 +4402,138 @@ function _chartExemplars(items) {
                     ${escapeHtml(a.item_title || a.item_key)}${a.item_year ? ` · ${a.item_year}` : ''} · p. ${(a.page_index || 0) + 1}
                     ${pick.terms.length ? `<span class="exemplar-terms">matched: ${pick.terms.map(t => escapeHtml(t)).join(', ')}</span>` : ''}
                 </div>
+            </div>`;
+        }).join('')}
+        </div>`;
+}
+
+/* ── A vs B ──────────────────────────────────────────────────────────────────
+   Every other card describes one corpus.  The question that turns a description
+   into an argument is comparative — do the interviews emphasise this differently
+   from the papers, does 2024 read differently from 2019 — and answering it meant
+   filtering, writing numbers down, filtering again and comparing by hand.
+
+   Two selections are captured from the filter the user has already learned, so
+   there is no second filtering language to learn.  What the card will not do is
+   test significance: with seventeen themes compared at once, an uncorrected
+   p-value per theme would manufacture a "finding" from noise, and the honest
+   correction depends on a design decision that is the researcher's, not this
+   card's.  It reports what differs and by how much, and says that is what it is. */
+
+let _abSets = { A: null, B: null };
+
+const AB_MIN_CODED = 10;   // below this a percentage share says nothing
+
+function _filterLabel(f = {}) {
+    const parts = [];
+    if (f.untagged) parts.push('uncoded only');
+    (f.tagIds || []).length && parts.push(`${f.tagIds.length} theme${f.tagIds.length !== 1 ? 's' : ''} selected`);
+    (f.tagGroups || []).forEach(g => parts.push(g.length === 1 ? _themeName(g[0]) : `${_themeName(g[0])} +`));
+    if (f.type) parts.push(f.type);
+    if (f.itemKey) parts.push((appState.annotationsViewItems || []).find(a => a.item_key === f.itemKey)?.item_title || f.itemKey);
+    if (f.search) parts.push(`"${f.search}"`);
+    return parts.join(' · ') || 'whole library';
+}
+
+function captureAbSet(slot) {
+    const filter = { ...appState.annotationsViewFilter };
+    _abSets[slot] = { filter, label: _filterLabel(filter) };
+    renderAnalysisDashboard();
+}
+
+function clearAbSets() {
+    _abSets = { A: null, B: null };
+    renderAnalysisDashboard();
+}
+
+function _abMembers(set) {
+    if (!set) return [];
+    return _rollupItems((appState.annotationsViewItems || []).filter(a => _matchesAnnotationFilter(a, set.filter)));
+}
+
+function _comparisonRows() {
+    const A = _abMembers(_abSets.A), B = _abMembers(_abSets.B);
+    const codedA = A.filter(a => (a.tags || []).length);
+    const codedB = B.filter(a => (a.tags || []).length);
+    const count = list => {
+        const m = new Map();
+        list.forEach(a => new Set((a.tags || []).map(t => t.tag_id)).forEach(id => m.set(id, (m.get(id) || 0) + 1)));
+        return m;
+    };
+    const cA = count(codedA), cB = count(codedB);
+    const tags = new Map();
+    [...A, ...B].forEach(a => (a.tags || []).forEach(t => tags.set(t.tag_id, t)));
+    const rows = [...tags.values()].map(t => {
+        const nA = cA.get(t.tag_id) || 0, nB = cB.get(t.tag_id) || 0;
+        const pA = codedA.length ? (nA / codedA.length) * 100 : 0;
+        const pB = codedB.length ? (nB / codedB.length) * 100 : 0;
+        return { tag: t, nA, nB, pA, pB, diff: pB - pA };
+    }).filter(r => r.nA || r.nB).sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff));
+    const idsA = new Set(A.map(a => a.annotation_id));
+    return { rows, A, B, codedA: codedA.length, codedB: codedB.length,
+             overlap: B.filter(a => idsA.has(a.annotation_id)).length };
+}
+
+function _chartComparison() {
+    const header = `<div class="analysis-card-header"><span>${icon('columns-2')} Compare Two Selections</span>` +
+        `<small>filter the annotations, capture it as A, filter again, capture as B</small>` +
+        `${_analysisRollupNote()}${_abSets.A && _abSets.B ? `<div class="analysis-export-actions">` +
+        `<button class="analysis-export-chip" type="button" onclick="exportProjectComparisonData()" title="Download as CSV">${icon('table-2')} Data</button></div>` : ''}</div>`;
+
+    const slot = k => {
+        const s = _abSets[k];
+        return `<div class="ab-slot">
+            <span class="ab-badge ab-badge-${k.toLowerCase()}">${k}</span>
+            ${s ? `<span class="ab-label">${escapeHtml(s.label)}</span><small>${_abMembers(s).length} annotations</small>`
+                : `<span class="ab-label ab-empty">not captured</span>`}
+            <button type="button" class="ab-capture" onclick="captureAbSet('${k}')">${s ? 'Replace with current filter' : 'Capture current filter'}</button>
+        </div>`;
+    };
+    const controls = `<div class="ab-controls">${slot('A')}${slot('B')}
+        ${(_abSets.A || _abSets.B) ? `<button type="button" class="ab-clear" onclick="clearAbSets()">${icon('x')} Clear</button>` : ''}</div>`;
+
+    if (!_abSets.A || !_abSets.B) {
+        return header + controls + `<p class="analysis-empty">Capture two selections to compare them. The current filter — themes, type, file, search — becomes the selection, so anything you can filter to, you can compare.</p>`;
+    }
+
+    const { rows, A, B, codedA, codedB, overlap } = _comparisonRows();
+    if (!codedA || !codedB) {
+        return header + controls + `<p class="analysis-empty">One of the selections has no coded annotations (A: ${codedA}, B: ${codedB}), so there is nothing to compare.</p>`;
+    }
+    const shown = rows.slice(0, 14);
+    const maxAbs = Math.max(1, ...shown.map(r => Math.abs(r.diff)));
+
+    /* A share out of a handful is not a share.  Below this the percentages are
+       still arithmetically right and analytically worthless, so say so rather
+       than printing "100%" off two annotations and letting it look like one. */
+    const thin = [];
+    if (codedA < AB_MIN_CODED) thin.push(`A has only ${codedA} coded annotation${codedA !== 1 ? 's' : ''}`);
+    if (codedB < AB_MIN_CODED) thin.push(`B has only ${codedB} coded annotation${codedB !== 1 ? 's' : ''}`);
+
+    return header + controls + `
+        <div class="ab-summary">
+            <span>A: <strong>${codedA}</strong> coded of ${A.length}</span>
+            <span>B: <strong>${codedB}</strong> coded of ${B.length}</span>
+            <span>${rows.length} theme${rows.length !== 1 ? 's' : ''} present in either</span>
+        </div>
+        ${overlap ? `<p class="ab-warn">${overlap} annotation${overlap !== 1 ? 's are' : ' is'} in both selections, so the two are not independent — the difference understates how far apart they are.</p>` : ''}
+        ${thin.length ? `<p class="ab-warn">${thin.join(' and ')} — a share out of that few moves by ${
+            (100 / Math.min(...thin.map(t => +t.match(/\d+/)[0]))).toFixed(0)} percentage points for every single annotation, so read the differences below as direction, not magnitude.</p>` : ''}
+        <p class="ab-warn ab-method">Shares are of each selection's <em>coded</em> annotations, because the selections differ in size and raw counts would only restate that. Differences are descriptive: no significance test is applied, since testing seventeen themes at once would produce apparent findings from noise.</p>
+        ${_shownOf(shown.length, rows.length, 'themes')}
+        <div class="ab-rows">
+        ${shown.map(r => {
+            const w = (Math.abs(r.diff) / maxAbs) * 50;
+            const toB = r.diff > 0;
+            return `<div class="ab-row">
+                <button type="button" class="ab-row-theme" style="color:${r.tag.color || 'var(--accent)'}"
+                        onclick="drillIntoTheme(${r.tag.tag_id})">${escapeHtml(r.tag.name)}</button>
+                <span class="ab-row-a">${r.nA} · ${r.pA.toFixed(0)}%</span>
+                <span class="ab-row-bar"><span class="ab-bar-mid"></span>
+                    <span class="ab-bar-fill ${toB ? 'to-b' : 'to-a'}" style="width:${w.toFixed(1)}%;${toB ? 'left:50%' : `left:${(50 - w).toFixed(1)}%`}"></span>
+                </span>
+                <span class="ab-row-b">${r.nB} · ${r.pB.toFixed(0)}%</span>
+                <span class="ab-row-diff ${toB ? 'to-b' : 'to-a'}">${r.diff > 0 ? '+' : ''}${r.diff.toFixed(0)} pp</span>
             </div>`;
         }).join('')}
         </div>`;
