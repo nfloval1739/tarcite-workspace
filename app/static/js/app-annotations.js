@@ -4175,8 +4175,8 @@ function _chartIRR() {
         <div class="analysis-card-header"><span>${icon('users')} Inter-rater Reliability (Cohen's κ)</span><small>compare your coding against a second coder's JSON export</small></div>
         ${data ? _renderKappaResults(data) : `
         <div class="irr-instructions">
-            <p style="margin:0 0 8px;color:var(--text-secondary);font-size:0.85rem">Export annotations via <strong>Export → JSON</strong>, share with a colleague, ask them to recode the same set, then paste their JSON export below.</p>
-            <textarea class="irr-paste-area" id="irr-paste" placeholder='[{"annotation_id":1,"tags":[{"tag_id":5,"name":"Theme"}]}, ...]' rows="4"></textarea>
+            <p style="margin:0 0 8px;color:var(--text-secondary);font-size:0.85rem">Export annotations via <strong>Export &rarr; JSON</strong>, share with a colleague, ask them to recode the same set, then paste their JSON export below. Themes are matched <strong>by name</strong>, so their theme names must match yours.</p>
+            <textarea class="irr-paste-area" id="irr-paste" placeholder='Paste the annotations JSON export here — {"annotations":[{"annotation_id":1,"themes":[{"name":"Governance"}]}, ...]}' rows="4"></textarea>
             <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
                 <button class="btn-secondary" style="font-size:0.8rem;padding:4px 12px" onclick="computeIRR()">Compute κ</button>
                 ${appState._irrError ? `<span style="color:#ef4444;font-size:0.8rem">${escapeHtml(appState._irrError)}</span>` : ''}
@@ -4190,14 +4190,52 @@ function computeIRR() {
     try {
         const text = ta.value.trim();
         if (!text) throw new Error('Paste the second coder\'s JSON export first.');
-        const raw = JSON.parse(text);
-        if (!Array.isArray(raw)) throw new Error('Expected a JSON array.');
+        const parsed = JSON.parse(text);
+        /* Accept the app's own Export → JSON file, which is what the instructions
+           above tell the user to share with a colleague.  It is an object with an
+           `annotations` array whose entries carry `themes: [{name, color}]` —
+           pasting it used to fail outright with "Expected a JSON array", so the
+           documented workflow could never have worked.  A bare array of
+           {annotation_id, tags:[{tag_id}]} is still accepted. */
+        const raw = Array.isArray(parsed) ? parsed
+            : Array.isArray(parsed?.annotations) ? parsed.annotations
+            : null;
+        if (!raw) throw new Error('Expected the annotations JSON export, or an array of {annotation_id, themes}.');
+
         // Both coders are folded to the same level the dashboard is displaying,
         // so κ answers the same question as the charts around it.
         const rootOf = _analysisRollup === 'root' ? _rootTagIndex() : null;
+
+        /* Theme names are the portable identity between two coders: tag_ids are
+           per-database, so the same theme has different ids on a colleague's
+           machine and matching on them would score every code as a total
+           disagreement.  Prefer a name match, fall back to tag_id. */
+        const idByName = new Map();
+        (appState.allTags || []).forEach(t => {
+            if (t.name) idByName.set(String(t.name).trim().toLowerCase(), t.tag_id);
+        });
+        const resolveTagId = t => {
+            if (t == null) return null;
+            const name = typeof t === 'string' ? t : t.name;
+            const byName = name != null ? idByName.get(String(name).trim().toLowerCase()) : undefined;
+            if (byName !== undefined) return byName;
+            return typeof t === 'object' && Number.isFinite(t.tag_id) ? t.tag_id : null;
+        };
+
+        let unknownThemes = 0;
         const coder2 = {};
         raw.forEach(a => {
-            coder2[a.annotation_id] = new Set((a.tags || []).map(t => _rollupTagId(t.tag_id, rootOf)));
+            if (a?.annotation_id == null) return;
+            const theirTags = a.themes || a.tags || [];
+            const ids = theirTags
+                .map(t => {
+                    const id = resolveTagId(t);
+                    if (id === null) unknownThemes++;
+                    return id;
+                })
+                .filter(id => id !== null)
+                .map(id => _rollupTagId(id, rootOf));
+            coder2[a.annotation_id] = new Set(ids);
         });
         const items = _rollupItems(_filteredAnnotations());
         const shared = items.filter(a => coder2[a.annotation_id] !== undefined);
@@ -4247,7 +4285,7 @@ function computeIRR() {
             return { tag, kappa, alpha, n1: a11 + a10, n2: a11 + a01, instances: a11 + a10 + a01, agreed: a11 };
         }).filter(r => r.n1 > 0 || r.n2 > 0).sort((a, b) => b.kappa - a.kappa);
 
-        appState._irrData = { results, shared: shared.length, mineOnly, theirsOnly, rollup: _analysisRollup };
+        appState._irrData = { results, shared: shared.length, mineOnly, theirsOnly, unknownThemes, rollup: _analysisRollup };
         appState._irrError = null;
     } catch (e) {
         const msg = e instanceof SyntaxError ? 'Invalid JSON — make sure you paste the full export without modification.' : e.message;
@@ -4259,7 +4297,7 @@ function computeIRR() {
 
 const IRR_MIN_INSTANCES = 10;   // below this a per-code κ is too unstable to read
 
-function _renderKappaResults({ results, shared, mineOnly = 0, theirsOnly = 0 }) {
+function _renderKappaResults({ results, shared, mineOnly = 0, theirsOnly = 0, unknownThemes = 0 }) {
     /* The headline used to be a plain mean over codes, so a code applied to one
        annotation moved it as much as a code applied to two hundred: perfect
        agreement on 100 annotations plus one disputed rare code reported as
@@ -4288,6 +4326,7 @@ function _renderKappaResults({ results, shared, mineOnly = 0, theirsOnly = 0 }) 
                 <br><small>Krippendorff's α ${weightedAlpha.toFixed(3)} · unweighted mean κ ${unweighted.toFixed(3)} · ${shared} annotations coded by both</small>
                 ${(mineOnly || theirsOnly) ? `<br><small class="irr-warn">κ covers shared annotations only — ${mineOnly} of yours and ${theirsOnly} of theirs have no counterpart, so disagreement about <em>what</em> to code is not measured here.</small>` : ''}
                 ${thin ? `<br><small class="irr-warn">${thin} code${thin !== 1 ? 's' : ''} used fewer than ${IRR_MIN_INSTANCES} times — κ is unstable at that prevalence.</small>` : ''}
+                ${unknownThemes ? `<br><small class="irr-warn">${unknownThemes} theme reference${unknownThemes !== 1 ? 's' : ''} in their export matched no theme in your codebook and were ignored — check the theme names agree.</small>` : ''}
                 <button class="btn-secondary" style="font-size:0.75rem;padding:2px 8px;margin-left:12px" onclick="appState._irrData=null;renderAnalysisDashboard()">Reset</button>
             </div>
         </div>
