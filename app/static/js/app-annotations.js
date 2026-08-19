@@ -2883,11 +2883,7 @@ function _chartThemeFrequency(items, options = {}) {
     const sorted = all.slice(0, 15);
     if (!sorted.length) return `<div class="analysis-card-header"><span>Theme Frequency</span></div><p class="analysis-empty">No themed annotations yet.</p>`;
     const max = sorted[0].count;
-    const exportBtn = `<div class="analysis-export-actions">
-        <button class="analysis-export-chip" type="button" onclick="exportProjectThemeFrequencyData()" title="Download as CSV">${icon('table-2')} Data</button>
-        <button class="analysis-export-chip" type="button" onclick="exportProjectThemeFrequencySvg()" title="Download as SVG">${icon('file-code')} SVG</button>
-        <button class="analysis-export-chip" type="button" onclick="exportProjectThemeFrequencyPng()" title="Download as PNG">${icon('image')} PNG</button>
-    </div>`;
+    const exportBtn = _exportChips('ThemeFrequency');
     return `
         <div class="analysis-card-header"><span>${icon('git-branch')} Theme Frequency</span>${_analysisRollupNote()}${_shownOf(sorted.length, all.length, 'themes')}${exportBtn}</div>
         <div class="analysis-bars">${sorted.map(t => `
@@ -3066,6 +3062,16 @@ function _analysisRollupNote() {
         ? '<small class="analysis-rollup-note">rolled up to top-level themes</small>' : '';
 }
 
+/* Every card that can be exported offers the same three chips in the same
+   order, so "where is the download" has one answer across the dashboard. */
+function _exportChips(base) {
+    return `<div class="analysis-export-actions">
+        <button class="analysis-export-chip" type="button" onclick="exportProject${base}Data()" title="Download as CSV">${icon('table-2')} Data</button>
+        <button class="analysis-export-chip" type="button" onclick="exportProject${base}Svg()" title="Download as SVG">${icon('file-code')} SVG</button>
+        <button class="analysis-export-chip" type="button" onclick="exportProject${base}Png()" title="Download as PNG">${icon('image')} PNG</button>
+    </div>`;
+}
+
 let _wfMode = 'bars'; // 'bars' | 'cloud' | 'rank'
 let _wfCache = null;
 
@@ -3106,6 +3112,7 @@ function _renderProjWf(sorted, max) {
                 <button class="wf-mode-btn${_projWfMode==='cloud'?' active':''}" onclick="_setProjWfMode('cloud')" title="Word cloud">${icon('wind')}</button>
                 <button class="wf-mode-btn${_projWfMode==='treemap'?' active':''}" onclick="_setProjWfMode('treemap')" title="Treemap">${icon('layout-grid')}</button>
             </div>
+            ${_exportChips('WordFrequency')}
         </div>`;
     if (_projWfMode === 'cloud') return header + _renderWfCloud(sorted, max);
     if (_projWfMode === 'treemap') return header + _renderWfTreemap(sorted, max);
@@ -3153,6 +3160,7 @@ function _renderWf(sorted, max) {
                 <button class="wf-mode-btn${_wfMode==='cloud'?' active':''}" onclick="_setWfMode('cloud')" title="Word cloud">${icon('wind')}</button>
                 <button class="wf-mode-btn${_wfMode==='treemap'?' active':''}" onclick="_setWfMode('treemap')" title="Treemap">${icon('layout-grid')}</button>
             </div>
+            ${_exportChips('WordFrequency')}
         </div>`;
     if (_wfMode === 'cloud') return header + _renderWfCloud(sorted, max);
     if (_wfMode === 'treemap') return header + _renderWfTreemap(sorted, max);
@@ -3244,6 +3252,7 @@ function _chartCoOccurrence(items) {
                 <button class="analysis-rollup-btn${_coocMetric === 'count' ? ' active' : ''}" type="button" onclick="setCoocMetric('count')" title="Rank by raw co-occurrence count">Count</button>
                 <button class="analysis-rollup-btn${_coocMetric === 'jaccard' ? ' active' : ''}" type="button" onclick="setCoocMetric('jaccard')" title="Rank by Jaccard index, which corrects for theme size">Jaccard</button>
             </div>
+            ${_exportChips('CoOccurrence')}
         </div>
         <div class="analysis-bars analysis-bars-2col">${sorted.map(p => `
             <div class="analysis-bar-row analysis-drill" role="button" tabindex="0"
@@ -3340,11 +3349,7 @@ function _chartDocumentMatrix(items, options = {}) {
     const maxVal = Math.max(1, ...topThemes.flatMap(t => topDocs.map(([k]) => matrix[t.tag_id]?.[k] || 0)));
     const short = s => s.length > 14 ? s.slice(0, 13) + '…' : s;
 
-    const exportBtnMatrix = `<div class="analysis-export-actions">
-        <button class="analysis-export-chip" type="button" onclick="exportProjectDocumentMatrixData()" title="Download as CSV">${icon('table-2')} Data</button>
-        <button class="analysis-export-chip" type="button" onclick="exportProjectDocumentMatrixSvg()" title="Download as SVG">${icon('file-code')} SVG</button>
-        <button class="analysis-export-chip" type="button" onclick="exportProjectDocumentMatrixPng()" title="Download as PNG">${icon('image')} PNG</button>
-    </div>`;
+    const exportBtnMatrix = _exportChips('DocumentMatrix');
     return `
         <div class="analysis-card-header"><span>${icon('grid')} Theme × ${MATRIX_GROUP_LABELS[mode]} Matrix</span><small>annotation count per theme per ${
             mode === 'year' ? 'year of publication · in time order' : mode === 'type' ? 'annotation type · most-coded first' : 'paper · most-coded first'
@@ -3445,7 +3450,14 @@ function _chartCodingDensity(items) {
         const p = a.page_index ?? 0;
         byDoc[a.item_key].pages[p] = (byDoc[a.item_key].pages[p] || 0) + 1;
     });
-    const docs = Object.values(byDoc).slice(0, 8);
+    /* Ranked by how much coding each document carries.  Taking the first eight
+       in insertion order let the API's item_key ordering pick the sample —
+       stable, but not the eight documents anyone would choose to look at, and
+       not the eight the export produced either. */
+    const allDocs = Object.values(byDoc)
+        .map(d => ({ ...d, total: Object.values(d.pages).reduce((s, v) => s + v, 0) }))
+        .sort((a, b) => b.total - a.total || a.title.localeCompare(b.title));
+    const docs = allDocs.slice(0, 12);
     if (!docs.length) return `<div class="analysis-card-header"><span>${icon('map')} Coding Density per Page</span></div><p class="analysis-empty">No annotations yet.</p>`;
 
     const rows = docs.map(doc => {
@@ -3460,12 +3472,16 @@ function _chartCodingDensity(items) {
         return `<div class="density-row">
             <span class="density-label" title="${escapeHtml(doc.title)}">${escapeHtml(doc.title.slice(0, 28))}${doc.title.length > 28 ? '…' : ''}</span>
             <div class="density-strip">${cells}</div>
-            <span class="density-total">${Object.values(pages).reduce((s,v)=>s+v,0)}</span>
+            <span class="density-total">${doc.total}</span>
         </div>`;
     }).join('');
 
     return `
-        <div class="analysis-card-header"><span>${icon('map')} Coding Density per Page</span><small>each cell = one page · color intensity = annotation count</small></div>
+        <div class="analysis-card-header"><span>${icon('map')} Coding Density per Page</span>
+            <small>each cell = one page · colour intensity = annotation count · most-coded document first</small>
+            ${_shownOf(docs.length, allDocs.length, 'documents')}
+            ${_exportChips('CodingDensity')}
+        </div>
         <div class="density-chart">${rows}</div>`;
 }
 
@@ -3475,11 +3491,7 @@ function _chartThemeNetwork(items) {
             <span>${icon('share-2')} Theme Relationship Network</span>
             <small>node size = frequency · edge = co-occurrence · click a node for its annotations</small>
             ${_analysisRollupNote()}<small class="analysis-trunc" id="network-cap-note"></small>
-            <div class="analysis-export-actions">
-                <button class="analysis-export-chip" type="button" onclick="exportProjectNetworkData()" title="Download network nodes and edges as CSV">${icon('table-2')} Data</button>
-                <button class="analysis-export-chip" type="button" onclick="exportProjectNetworkPng()" title="Download current network view as PNG">${icon('image')} PNG</button>
-                <button class="analysis-export-chip" type="button" onclick="exportProjectNetworkSvg()" title="Download editable network SVG">${icon('file-code')} SVG</button>
-            </div>
+            ${_exportChips('Network')}
         </div>
         <div class="network-controls">
             <div class="network-ctrl-group">
@@ -3518,11 +3530,7 @@ function _chartProjectNetworkHtml() {
             <span>${icon('share-2')} Theme Relationship Network</span>
             <small>node size = frequency · edge = co-occurrence · click a node for its annotations</small>
             ${_analysisRollupNote()}<small class="analysis-trunc" id="proj-network-cap-note"></small>
-            <div class="analysis-export-actions">
-                <button class="analysis-export-chip" type="button" onclick="exportProjectNetworkData()" title="Download network nodes and edges as CSV">${icon('table-2')} Data</button>
-                <button class="analysis-export-chip" type="button" onclick="exportProjectNetworkPng()" title="Download current network view as PNG">${icon('image')} PNG</button>
-                <button class="analysis-export-chip" type="button" onclick="exportProjectNetworkSvg()" title="Download editable network SVG">${icon('file-code')} SVG</button>
-            </div>
+            ${_exportChips('Network')}
         </div>
         <div class="network-controls">
             <div class="network-ctrl-group">
@@ -4141,12 +4149,7 @@ function _chartSaturation(items, options = {}) {
         <rect x="${(toX(lastNew + 1) - 23).toFixed(1)}" y="${(satLabelY - 9).toFixed(1)}" width="46" height="11" rx="2" fill="${cBgCard}" opacity="0.88"/>
         <text x="${satX}" y="${satLabelY.toFixed(1)}" text-anchor="middle" font-size="8" fill="${cAccent}">saturation</text>` : '';
 
-    const exportActions = `
-            <div class="analysis-export-actions">
-                <button class="analysis-export-chip" type="button" onclick="exportProjectSaturationData()" title="Download as CSV">${icon('table-2')} Data</button>
-                <button class="analysis-export-chip" type="button" onclick="exportProjectSaturationSvg()" title="Download as SVG">${icon('file-code')} SVG</button>
-                <button class="analysis-export-chip" type="button" onclick="exportProjectSaturationPng()" title="Download as PNG">${icon('image')} PNG</button>
-            </div>`;
+    const exportActions = _exportChips('Saturation');
 
     return `
         <div class="analysis-card-header">
@@ -4222,11 +4225,7 @@ function _chartSentiment(items, options = {}) {
     const themes = allSentimentThemes.slice(0, 8);
 
     const cBgTertiary = _cssVar('--bg-tertiary', '#162d5a');
-    const exportBtnSentiment = `<div class="analysis-export-actions">
-        <button class="analysis-export-chip" type="button" onclick="exportProjectSentimentData()" title="Download as CSV">${icon('table-2')} Data</button>
-        <button class="analysis-export-chip" type="button" onclick="exportProjectSentimentSvg()" title="Download as SVG">${icon('file-code')} SVG</button>
-        <button class="analysis-export-chip" type="button" onclick="exportProjectSentimentPng()" title="Download as PNG">${icon('image')} PNG</button>
-    </div>`;
+    const exportBtnSentiment = _exportChips('Sentiment');
     return `
         <div class="analysis-card-header"><span>${icon('smile')} Annotation Sentiment</span><small>${sourceNote}</small>${coverageWarning}${exportBtnSentiment}</div>
         <div class="sentiment-wrap">
@@ -4305,11 +4304,7 @@ function _chartTFIDF(items, options = {}) {
         t.maxScore = t.tfidf[0]?.score || 1;
     });
 
-    const exportBtnTFIDF = `<div class="analysis-export-actions">
-        <button class="analysis-export-chip" type="button" onclick="exportProjectTFIDFData()" title="Download as CSV">${icon('table-2')} Data</button>
-        <button class="analysis-export-chip" type="button" onclick="exportProjectTFIDFSvg()" title="Download as SVG">${icon('file-code')} SVG</button>
-        <button class="analysis-export-chip" type="button" onclick="exportProjectTFIDFPng()" title="Download as PNG">${icon('image')} PNG</button>
-    </div>`;
+    const exportBtnTFIDF = _exportChips('TFIDF');
     return `
         <div class="analysis-card-header"><span>${icon('zap')} TF-IDF per Theme</span><small>most distinctive words per theme, measured against all ${N} themes with enough text${themes.length < N ? ` · showing the ${themes.length} largest` : ''}</small>${exportBtnTFIDF}</div>
         <div class="tfidf-grid">
