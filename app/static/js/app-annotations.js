@@ -3844,6 +3844,54 @@ function _netDraw() {
     ctx.translate(tr.tx, tr.ty);
     ctx.scale(tr.scale, tr.scale);
 
+    /* ── Label sizing and collision ───────────────────────────────────────
+       Everything here is drawn inside a scaled context, so a font set at a
+       fixed size is in world units and grows with the zoom -- which is why
+       labels ballooned and ran into each other. Dividing by the scale pins
+       every label to a constant size on screen at any zoom.
+
+       Text still cannot be allowed to sit on text, so labels are placed
+       greedily in priority order: hovered first, then the focused note, then
+       by how connected a node is. A label whose box is already taken is
+       dropped rather than drawn over its neighbour, and it comes back as soon
+       as zooming or dragging gives it room. */
+    const _lblInv = 1 / (tr.scale || 1);
+    const NODE_LABEL_PX = 10;
+    const HOVER_LABEL_PX = 12;
+    const EDGE_LABEL_PX = 8;
+    const _lblFont = (px, weight = 500) =>
+        `${weight} ${px * _lblInv}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    const _lblRects = [];
+    const _lblHits = r => _lblRects.some(o =>
+        !(r.x2 < o.x1 || r.x1 > o.x2 || r.y2 < o.y1 || r.y1 > o.y2));
+
+    /* Node names are planned before edges are drawn, so a relation label can
+       yield to a note's name rather than the other way round. */
+    const _nodeLabelPlan = new Map();
+    if (_netState.showLabels) {
+        const _pri = n => {
+            if (hoveredNode && hoveredNode.id === n.id) return 1e9;
+            if (activeNoteId && n.id === activeNoteId) return 1e8;
+            return (n.r || 0) * 1000 + (adjMap[n.id] ? adjMap[n.id].size : 0);
+        };
+        [...nodes].sort((a, b) => _pri(b) - _pri(a)).forEach(n => {
+            if (_netState.timelineMaxYear && n.year && n.year > _netState.timelineMaxYear) return;
+            const isHov = hoveredNode && hoveredNode.id === n.id;
+            const px = isHov ? HOVER_LABEL_PX : NODE_LABEL_PX;
+            ctx.font = _lblFont(px);
+            const raw = n.name || 'Untitled';
+            const cap = isHov ? 44 : 22;
+            const text = raw.length > cap ? raw.slice(0, cap - 1) + '\u2026' : raw;
+            const w = ctx.measureText(text).width;
+            const h = px * _lblInv * 1.3;
+            const top = n.y + (n.r || 4) + 3 * _lblInv;
+            const rect = { x1: n.x - w / 2, x2: n.x + w / 2, y1: top, y2: top + h };
+            if (_lblHits(rect)) return;
+            _lblRects.push(rect);
+            _nodeLabelPlan.set(n.id, { text, px, top });
+        });
+    }
+
     // 2. Ambient dot matrix
     const gridSize = 28;
     const gx0 = Math.floor((-tr.tx / tr.scale) / gridSize) * gridSize;
@@ -3997,26 +4045,32 @@ function _netDraw() {
 
         // Edge label pill (relation type)
         if (e.label && (isEdgeConnectedToHover || (tr.scale > 0.95 && !isDimmed))) {
-            ctx.save();
-            ctx.setLineDash([]);
-            ctx.font = '500 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            ctx.font = _lblFont(EDGE_LABEL_PX);
             const labelText = String(e.label);
             const textWidth = ctx.measureText(labelText).width;
-            const pw = textWidth + 6, ph = 12;
-            ctx.fillStyle = isDark ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.94)';
-            ctx.strokeStyle = _netHexToRgba(e.color || '#60a5fa', isEdgeConnectedToHover ? 0.8 : 0.3);
-            ctx.lineWidth = 0.7;
-            ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(midX - pw / 2, midY - ph / 2, pw, ph, 2.5);
-            else ctx.rect(midX - pw / 2, midY - ph / 2, pw, ph);
-            ctx.fill();
-            ctx.stroke();
+            const pw = textWidth + 6 * _lblInv, ph = 12 * _lblInv;
+            const _eRect = { x1: midX - pw / 2, x2: midX + pw / 2, y1: midY - ph / 2, y2: midY + ph / 2 };
+            /* A relation type is worth less than a note's name, so it gives way
+               unless the user is hovering this very edge. */
+            if (isEdgeConnectedToHover || !_lblHits(_eRect)) {
+                _lblRects.push(_eRect);
+                ctx.save();
+                ctx.setLineDash([]);
+                ctx.fillStyle = isDark ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.94)';
+                ctx.strokeStyle = _netHexToRgba(e.color || '#60a5fa', isEdgeConnectedToHover ? 0.8 : 0.3);
+                ctx.lineWidth = 0.7 * _lblInv;
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(midX - pw / 2, midY - ph / 2, pw, ph, 2.5 * _lblInv);
+                else ctx.rect(midX - pw / 2, midY - ph / 2, pw, ph);
+                ctx.fill();
+                ctx.stroke();
 
-            ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.95)' : 'rgba(30, 41, 59, 0.95)';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(labelText, midX, midY);
-            ctx.restore();
+                ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.95)' : 'rgba(30, 41, 59, 0.95)';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(labelText, midX, midY);
+                ctx.restore();
+            }
         }
     });
 
@@ -4116,20 +4170,17 @@ function _netDraw() {
         ctx.stroke();
 
         // Modern clean typography label (reduced, minimalist sizing)
-        if (_netState.showLabels && !isExcludedByTime) {
-            const fontSz = isHovered ? 9.5 : 8.5;
-            ctx.font = `500 ${fontSz}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-            const rawLabel = n.name || 'Untitled';
-            const label = isHovered ? rawLabel : (rawLabel.length > 24 ? rawLabel.slice(0, 22) + '…' : rawLabel);
-
+        const _plan = _nodeLabelPlan.get(n.id);
+        if (_plan && !isExcludedByTime) {
+            ctx.font = _lblFont(_plan.px);
             ctx.shadowColor = isDark ? 'rgba(9, 13, 22, 0.95)' : 'rgba(248, 250, 252, 0.95)';
-            ctx.shadowBlur = 3;
+            ctx.shadowBlur = 3 * _lblInv;
             ctx.fillStyle = isDark
                 ? (isHovered ? '#ffffff' : 'rgba(203, 213, 225, 0.80)')
                 : (isHovered ? '#0f172a' : 'rgba(51, 65, 85, 0.85)');
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            ctx.fillText(label, n.x, n.y + currentR + 3);
+            ctx.fillText(_plan.text, n.x, _plan.top);
             ctx.shadowBlur = 0;
         }
 
