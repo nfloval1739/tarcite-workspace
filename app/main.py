@@ -47,6 +47,7 @@ from app.routers.settings import router as settings_router
 from app.routers.sync import router as sync_router
 from app.routers.tags import router as tags_router
 from app.routers.translation import router as translation_router
+from app.routers.zettel import router as zettel_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -98,6 +99,7 @@ app.include_router(items_router)
 app.include_router(annotations_router)
 app.include_router(tags_router)
 app.include_router(projects_router)
+app.include_router(zettel_router)
 app.include_router(history_router)
 app.include_router(files_router)
 app.include_router(export_router)
@@ -166,6 +168,11 @@ def on_startup() -> None:
         reconcile_item_collections()  # self-heal folder membership drift
     except Exception as exc:
         logger.warning("item_collections reconcile failed: %s", exc)
+    try:
+        from app.repositories.zettel import reconcile_zettel_disk
+        reconcile_zettel_disk()  # sync .md notes with Obsidian edits
+    except Exception as exc:
+        logger.warning("zettel disk reconcile failed: %s", exc)
     # Eager preload burns ~1 min of CPU per launch loading bge-large + the
     # reranker; default off — models load lazily on first search/sync instead.
     if config.preload_models:

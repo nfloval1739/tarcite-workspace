@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/static/logo/favicon-32x32.png">
     <link rel="shortcut icon" href="/static/logo/favicon.ico">
     <link rel="apple-touch-icon" href="/static/logo/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/style.css?v=analysis-drilldown-20260818">
+    <link rel="stylesheet" href="/static/style.css?v=zettel-analytics-1">
 </head>
 <body>
     <div id="splash-screen" class="splash-screen" aria-hidden="true">
@@ -83,7 +83,8 @@
                 <nav id="sidebar-tabs">
                     <button class="sidebar-tab active" data-tab="chat">Chat</button>
                     <button class="sidebar-tab" data-tab="library">Library</button>
-                    <button class="sidebar-tab" data-tab="notes">Themes</button>
+                    <button class="sidebar-tab" data-tab="themes">Themes</button>
+                    <button class="sidebar-tab" data-tab="notes">Notes</button>
                     <button class="sidebar-tab" data-tab="projects">Projects</button>
                     <button class="sidebar-tab" data-tab="settings" title="Settings"><i data-lucide="settings" style="width:16px;height:16px;vertical-align:middle;pointer-events:none;"></i></button>
                 </nav>
@@ -122,7 +123,7 @@
                 </div>
 
                 <!-- Notes Tab Content -->
-                <div id="tab-notes" class="sidebar-content notes-sidebar">
+                <div id="tab-themes" class="sidebar-content notes-sidebar">
 
                     <!-- TOP PANE: Themes -->
                     <div class="notes-pane notes-pane-top" id="notes-pane-top">
@@ -190,6 +191,17 @@
                     <input type="text" id="project-search" class="compact-input" placeholder="Search projects..." oninput="renderProjectsSidebar()">
                     <div id="projects-sidebar-list" class="projects-sidebar-list"></div>
                     <div id="projects-section-nav" class="projects-section-nav"></div>
+                </div>
+
+                <!-- Notes (Zettelkasten) Tab Content -->
+                <div id="tab-notes" class="sidebar-content zettel-sidebar">
+                    <div class="projects-sidebar-header">
+                        <span>Notes</span>
+                        <button class="notes-icon-btn" title="New note" onclick="newZettelNote()"><i data-lucide="plus" aria-hidden="true"></i></button>
+                    </div>
+                    <input type="text" id="zettel-search" class="compact-input" placeholder="Search notes..." oninput="renderZettelSidebar()">
+                    <div id="zettel-sidebar-list" class="projects-sidebar-list"></div>
+                    <div id="zettel-section-nav" class="projects-section-nav"></div>
                 </div>
 
                 <!-- Settings Tab Content -->
@@ -427,6 +439,32 @@
                         <button class="btn-small" onclick="openProjectModal()"><i data-lucide="plus" aria-hidden="true"></i> New Project</button>
                     </div>
                     <div id="project-view-content" class="project-view-content"></div>
+                </div>
+
+                <!-- Notes (Zettelkasten) Workspace View -->
+                <div id="view-notes" class="center-view">
+                    <div class="project-view-toolbar">
+                        <div>
+                            <div id="zettel-view-title" class="project-view-title">Notes</div>
+                            <div id="zettel-view-subtitle" class="project-view-subtitle">Atomic, evidence-anchored notes — your connected web of reading.</div>
+                        </div>
+                        <div class="zettel-toolbar-actions">
+                            <button class="btn-small" id="zettel-recompute-btn" onclick="recomputeZettelLinks()" title="Recompute shared-evidence, semantic, and contradiction links"><i data-lucide="sparkles" aria-hidden="true"></i> Recompute links</button>
+                            <div class="zettel-export-wrap">
+                                <button class="btn-small" onclick="toggleZettelExportMenu(event)" title="Export notes, links, or the graph"><i data-lucide="download" aria-hidden="true"></i> Export <i data-lucide="chevron-down" aria-hidden="true" style="width:12px;height:12px;"></i></button>
+                                <div id="zettel-export-menu" class="zettel-export-menu">
+                                    <button class="zettel-menu-item" onclick="exportZettelGraphHtml(); closeZettelExportMenu()"><i data-lucide="globe" aria-hidden="true"></i> Standalone interactive HTML</button>
+                                    <button class="zettel-menu-item" onclick="exportZettelMdZip(); closeZettelExportMenu()"><i data-lucide="file-archive" aria-hidden="true"></i> Markdown zip (Obsidian)</button>
+                                    <button class="zettel-menu-item" onclick="exportZettelNotesCsv(); closeZettelExportMenu()"><i data-lucide="table-2" aria-hidden="true"></i> Notes CSV</button>
+                                    <button class="zettel-menu-item" onclick="exportZettelLinksCsv(); closeZettelExportMenu()"><i data-lucide="link" aria-hidden="true"></i> Links CSV</button>
+                                    <button class="zettel-menu-item" onclick="exportZettelGraphSvg(); closeZettelExportMenu()"><i data-lucide="file-code-2" aria-hidden="true"></i> Graph SVG</button>
+                                    <button class="zettel-menu-item" onclick="exportZettelGraphPng(); closeZettelExportMenu()"><i data-lucide="image" aria-hidden="true"></i> Graph PNG</button>
+                                </div>
+                            </div>
+                            <button class="btn-small" onclick="newZettelNote()"><i data-lucide="plus" aria-hidden="true"></i> New note</button>
+                        </div>
+                    </div>
+                    <div id="zettel-view-content" class="project-view-content"></div>
                 </div>
 
                 <!-- Settings Center View -->
@@ -967,7 +1005,8 @@
     <script src="/static/js/app-library.js?v=library-health-tabs-20260528"></script>
     <script src="/static/js/app-preview.js?v=translation-freeze-fix-20260817"></script>
     <script src="/static/js/app-projects.js?v=chart-export-20260819"></script>
-    <script src="/static/js/app-annotations.js?v=chart-export-20260819"></script>
+    <script src="/static/js/app-annotations.js?v=zettel-analytics-1"></script>
+    <script src="/static/js/app-notes.js?v=zettel-analytics-1"></script>
     <script src="/static/js/app-search.js?v=quick-search-20260529"></script>
     <script src="/static/js/app-bootstrap.js?v=pdf-selection-ux-20260817"></script>
 <!-- Ink connection SVG overlay — fixed viewport, pointer-events managed per-group -->

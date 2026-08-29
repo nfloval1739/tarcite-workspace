@@ -412,6 +412,70 @@ Respond in this exact JSON:
         raise
 
 
+def check_note_pair_contradiction(note_a: Dict[str, Any], note_b: Dict[str, Any]) -> Dict[str, Any]:
+    """Ask the LLM whether two notes make claims that contradict each other.
+
+    Used by the zettelkasten contradiction-link recompute. Models on
+    ``check_single_relevance``: a JSON-only response with a ``response_format``
+    first attempt and a plain fallback. Returns ``{contradicts, confidence,
+    rationale}``; ``contradicts`` defaults to false on any parse failure so a
+    flaky model never invents a contradiction.
+    """
+    def _clip(text: str, n: int = 800) -> str:
+        text = (text or "").strip()
+        return text[:n] + ("…" if len(text) > n else "")
+
+    prompt = f"""You are comparing two atomic research notes from a zettelkasten. Decide whether their claims stand in genuine tension — i.e. accepting one would make the other false or highly dubious. Mere difference of topic or focus is NOT contradiction.
+
+NOTE A — "{note_a.get('title', '')}":
+{_clip(note_a.get('body_md', ''))}
+
+NOTE B — "{note_b.get('title', '')}":
+{_clip(note_b.get('body_md', ''))}
+
+Respond in this exact JSON:
+{{
+  "contradicts": true or false,
+  "confidence": "High" or "Medium" or "Low",
+  "rationale": "1–2 sentences. If contradicts is false, say briefly why they are compatible or unrelated."
+}}"""
+
+    client = _get_client()
+    try:
+        try:
+            response = _create_chat_completion(
+                client,
+                model=config.ai_model,
+                messages=[
+                    {"role": "system", "content": "You are a careful research assistant judging whether two notes contradict. Be conservative: only mark contradicts=true when the tension is real. Return only valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                max_tokens=400,
+            )
+        except Exception:
+            response = _create_chat_completion(
+                client,
+                model=config.ai_model,
+                messages=[
+                    {"role": "system", "content": "You are a careful research assistant judging whether two notes contradict. Be conservative: only mark contradicts=true when the tension is real. Return only valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=400,
+            )
+        verdict = _extract_json(response.choices[0].message.content or "{}")
+        # Never let a malformed response invent a contradiction.
+        verdict.setdefault("contradicts", False)
+        if not isinstance(verdict.get("contradicts"), bool):
+            verdict["contradicts"] = str(verdict.get("contradicts")).strip().lower() in ("true", "yes", "1")
+        return verdict
+    except Exception as exc:
+        logger.warning("check_note_pair_contradiction error: %s", exc)
+        return {"contradicts": False, "confidence": "Low", "rationale": f"Check failed: {exc}"}
+
+
 _CHAT_SYSTEM = """\
 You are an academic citation assistant helping a researcher explore their citation results.
 

@@ -265,6 +265,26 @@ class Config:
         self.db_path: str = str(DATA_DIR / "local_citation.sqlite")
         self.chroma_path: str = str(DATA_DIR / "chroma")
 
+        # Zettelkasten notes live as real .md files on disk (Obsidian interop).
+        # An explicit ``notes_dir`` setting wins; otherwise notes nest under the
+        # first configured reference directory, and finally fall back to the data
+        # dir so the feature still works with no library configured.
+        _notes_dir = s.get("notes_dir", "")
+        if _notes_dir:
+            self.notes_dir: str = str(Path(_notes_dir).expanduser())
+        else:
+            # reference_dirs entries are {"path", "label"} dicts; nest notes
+            # under the first configured reference directory, else the data dir.
+            _first_ref = ""
+            if self.reference_dirs:
+                _first_ref = self.reference_dirs[0].get("path", "") if isinstance(
+                    self.reference_dirs[0], dict
+                ) else str(self.reference_dirs[0])
+            self.notes_dir = str(Path(_first_ref) / "notes") if _first_ref else str(DATA_DIR / "notes")
+        # Recompute computed links (semantic/contradiction) on startup. Off by
+        # default: contradiction calls the LLM, which costs tokens on launch.
+        self.zettel_auto_recompute: bool = bool(s.get("zettel_auto_recompute", False))
+
         self.app_host: str = os.getenv("APP_HOST", "127.0.0.1")
         self.app_port: int = int(os.getenv("APP_PORT", "4443"))
         # MCP server: expose the local library as MCP tools at /mcp. Controlled

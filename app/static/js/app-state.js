@@ -105,6 +105,12 @@ const appState = {
     activeProjectId: null,
     activeProject: null,
     activeProjectSection: 'overview',
+    // Zettelkasten (Notes tab)
+    zettelNotes: [],
+    activeZettelNoteId: null,
+    activeZettelNote: null,
+    activeZettelSection: 'editor',
+    zettelGraphData: null,
     pdfChatScope: 'document',
     inkMode: false,
     noteConnections: [],

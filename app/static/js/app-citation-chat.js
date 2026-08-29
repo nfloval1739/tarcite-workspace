@@ -388,6 +388,10 @@ function renderMarkdown(text) {
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
+    // Zettelkasten wikilinks [[Note Title]] → clickable links. Run before
+    // inline formatting so the title text is styled like surrounding prose.
+    // The captured title is already HTML-escaped by the lines above.
+    s = s.replace(/\[\[([^\[\]\n]+)\]\]/g, '<a class="wikilink" data-note-title="$1">$1</a>');
     // Headers → bold block
     s = s.replace(/^#{1,6} (.+)$/gm, '<strong class="md-heading">$1</strong>');
     s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');

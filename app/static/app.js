@@ -77,6 +77,10 @@ function initSidebarTabs() {
                 loadProjects();
             }
             else if (tab === 'notes') {
+                setCenterView('notes');
+                loadZettelNotes();
+            }
+            else if (tab === 'themes') {
                 loadAllTags();
                 // Switch center to annotations workspace only if not already there
                 if (appState.activeCenterView !== 'annotations') setCenterView('annotations');
@@ -108,6 +112,9 @@ function setCenterView(view, options = {}) {
     }
     if (view === 'projects' && !options.skipProjectLoad) {
         loadProjects();
+    }
+    if (view === 'notes') {
+        if (typeof loadZettelNotes === 'function') loadZettelNotes();
     }
     if (view === 'annotations') {
         loadAnnotationsViewData();

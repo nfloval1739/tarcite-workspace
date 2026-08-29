@@ -64,6 +64,7 @@ def init_db() -> None:
         _ensure_item_activity_table(conn)
         _ensure_item_notes_columns(conn)
         _ensure_project_tables(conn)
+        _ensure_zettel_tables(conn)
         _ensure_citation_graph_tables(conn)
         _ensure_performance_indexes(conn)
         _ensure_reading_status_column(conn)
@@ -247,6 +248,74 @@ def _ensure_project_tables(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE projects ADD COLUMN note_connections TEXT DEFAULT '[]'")
     except Exception:
         pass
+
+
+def _ensure_zettel_tables(conn: sqlite3.Connection) -> None:
+    """Evidence-anchored zettelkasten: atomic notes, typed note-to-note links,
+    and a cache of computed links (shared evidence / semantic / contradiction).
+
+    Note bodies are Markdown (not HTML) so they can be mirrored to real ``.md``
+    files on disk for Obsidian interop; the on-disk files carry YAML frontmatter
+    for the anchor, tags, aliases and links. The DB is the source of truth; the
+    disk reconcile lives in ``app.repositories.zettel``.
+    """
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS zettel_notes (
+            note_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL DEFAULT 'Untitled',
+            body_md TEXT NOT NULL DEFAULT '',
+            anchor_annotation_id INTEGER,
+            anchor_item_key TEXT,
+            anchor_page_index INTEGER,
+            anchor_quote TEXT DEFAULT '',
+            tags_json TEXT DEFAULT '[]',
+            aliases_json TEXT DEFAULT '[]',
+            file_path TEXT DEFAULT '',
+            source TEXT DEFAULT 'manual',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (anchor_annotation_id) REFERENCES annotations(annotation_id) ON DELETE SET NULL,
+            FOREIGN KEY (anchor_item_key) REFERENCES items(item_key) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_zettel_notes_anchor ON zettel_notes(anchor_annotation_id);
+        CREATE INDEX IF NOT EXISTS idx_zettel_notes_item ON zettel_notes(anchor_item_key);
+        CREATE INDEX IF NOT EXISTS idx_zettel_notes_updated ON zettel_notes(updated_at);
+
+        CREATE TABLE IF NOT EXISTS zettel_links (
+            link_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_note_id INTEGER NOT NULL,
+            target_note_id INTEGER NOT NULL,
+            link_type TEXT NOT NULL DEFAULT 'extends',
+            origin TEXT NOT NULL DEFAULT 'manual',
+            weight REAL DEFAULT 1.0,
+            rationale TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(source_note_id, target_note_id, link_type, origin),
+            FOREIGN KEY (source_note_id) REFERENCES zettel_notes(note_id) ON DELETE CASCADE,
+            FOREIGN KEY (target_note_id) REFERENCES zettel_notes(note_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_zettel_links_source ON zettel_links(source_note_id);
+        CREATE INDEX IF NOT EXISTS idx_zettel_links_target ON zettel_links(target_note_id);
+        CREATE INDEX IF NOT EXISTS idx_zettel_links_origin ON zettel_links(origin);
+
+        CREATE TABLE IF NOT EXISTS zettel_computed_links (
+            computed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id_a INTEGER NOT NULL,
+            note_id_b INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            score REAL NOT NULL,
+            rationale TEXT DEFAULT '',
+            annotation_id_shared INTEGER,
+            computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(note_id_a, note_id_b, kind),
+            FOREIGN KEY (note_id_a) REFERENCES zettel_notes(note_id) ON DELETE CASCADE,
+            FOREIGN KEY (note_id_b) REFERENCES zettel_notes(note_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_zettel_computed_pair ON zettel_computed_links(note_id_a, note_id_b);
+    """)
 
 
 def _ensure_citation_graph_tables(conn: sqlite3.Connection) -> None:

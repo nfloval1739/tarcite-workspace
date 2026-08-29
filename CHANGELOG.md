@@ -8,6 +8,31 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Evidence-anchored zettelkasten (Notes tab).** A new top-level **Notes** tab
+  turns reading into a connected web of atomic notes, distinct from the
+  per-document @note panel and the Themes analysis dashboard (the former
+  "Notes" tab is now **Themes**). Each note is optionally **anchored to a PDF
+  annotation**, so a claim is tied to the exact passage that supports it; the
+  Evidence section shows the quote, page, item title and theme tags, and "Jump
+  to PDF" opens the right pane at that annotation. Notes are stored as
+  **Markdown** and written to real `.md` files with YAML frontmatter under a
+  `notes/` directory, so the folder opens directly in **Obsidian** and
+  `[[wikilinks]]` resolve in both directions; external edits are ingested on
+  next launch. Notes connect through **typed links** — supports, contradicts,
+  extends, refines, questions, exemplifies — and through three **computed
+  links** Obsidian cannot derive: **shared evidence** (pure SQL — same anchor
+  or shared theme tag), **semantic similarity** (cosine > 0.75 over a separate
+  `tarcite_notes` Chroma collection), and **contradiction** (an LLM verdict over
+  semantic-neighbour pairs that are both anchored, capped at 50 pairs). The
+  **Graph** view reuses the theme-network force-directed renderer with a
+  per-link-type visual language (green dashed = shared evidence, teal dashed =
+  shared theme, amber dotted = semantic, red = contradiction) and jumps to a
+  note on click. A "Recompute links" button refreshes the computed links
+  (shared evidence synchronously, semantic and contradiction in a background
+  job). Exports cover a Markdown zip, notes CSV, links CSV, and graph SVG/PNG.
+  New MCP tools — `create_note`, `update_note`, `link_notes`, `list_notes`,
+  `get_note`, `list_note_backlinks`, `recompute_zettel_links` — expose the
+  zettelkasten to agents.
 - **Drill-down from every chart to the annotations behind it.** Clicking a theme
   bar, a donut segment, a co-occurrence pair, a matrix cell, a word in the
   frequency or TF-IDF cards, or a node in the theme network now filters the

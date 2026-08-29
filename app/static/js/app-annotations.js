@@ -150,7 +150,7 @@ function initNotesTab() {
 function initNotesTreeResize() {
     const divider   = document.getElementById('notes-pane-divider');
     const topPane   = document.getElementById('notes-pane-top');
-    const container = document.getElementById('tab-notes');
+    const container = document.getElementById('tab-themes');
     if (!divider || !topPane || !container) return;
 
     const STORAGE_KEY = 'notesPaneSplit';
@@ -196,7 +196,7 @@ function renderNotesTagFilterList(query = '') {
     if (!list) return;
 
     // Update trash button title to reflect selection state
-    const trashBtn = document.querySelector('#tab-notes .notes-icon-btn.danger');
+    const trashBtn = document.querySelector('#tab-themes .notes-icon-btn.danger');
     if (trashBtn) {
         const n = appState.annotationsViewFilter.tagIds.length;
         trashBtn.title = n > 0 ? `Remove ${n} selected theme(s)` : 'Remove all themes';
@@ -2057,9 +2057,9 @@ function _exportDateStamp() {
 async function openAnnotationsView() {
     // Ensure Notes sidebar tab is active
     document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.remove('active'));
-    document.querySelector('.sidebar-tab[data-tab="notes"]')?.classList.add('active');
+    document.querySelector('.sidebar-tab[data-tab="themes"]')?.classList.add('active');
     document.querySelectorAll('.sidebar-content').forEach(c => c.classList.remove('active'));
-    document.getElementById('tab-notes')?.classList.add('active');
+    document.getElementById('tab-themes')?.classList.add('active');
     appState.activeSidebarTab = 'notes';
 
     setCenterView('annotations');
@@ -3568,223 +3568,572 @@ function _projNetSetColor(color) {
     _netState.edgeColor = color;
     const circle = document.getElementById('proj-net-color-circle');
     if (circle) circle.style.background = color;
-    _netDraw();
+    _netWakeAnimation();
 }
 
 let _netState = null;
 let _netCleanup = null;
+let _netAnimId = null;
 
-function _initNetworkGraph(items, canvasId = 'network-canvas', emptyId = 'network-empty') {
-    // Tear down previous listeners
+function _netHexToRgba(hex, alpha = 1) {
+    if (!hex || hex === 'auto') return `rgba(148, 163, 196, ${alpha})`;
+    if (hex.startsWith('rgba')) return hex;
+    if (hex.startsWith('rgb(')) return hex.replace('rgb(', 'rgba(').replace(')', `, ${alpha})`);
+    let c = hex.replace('#', '');
+    if (c.length === 3) c = c.split('').map(x => x + x).join('');
+    const num = parseInt(c, 16);
+    if (isNaN(num)) return `rgba(148, 163, 196, ${alpha})`;
+    return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
+}
+
+function _initNetworkGraph(items, canvasId = 'network-canvas', emptyId = 'network-empty', opts = {}) {
+    // Tear down previous listeners and animation loop
     if (_netCleanup) { _netCleanup(); _netCleanup = null; }
+    if (_netAnimId) { cancelAnimationFrame(_netAnimId); _netAnimId = null; }
     _netState = null;
 
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
     const dpr = window.devicePixelRatio || 1;
-    const H = 420;
-    // clientWidth includes padding (16px × 2 = 32px); subtract to get exact content width
-    const W = canvas.parentElement.clientWidth - 32;
+    const isZettel = canvasId === 'zettel-network-canvas';
+    const parentW = canvas.parentElement ? canvas.parentElement.clientWidth : 0;
+    const parentH = canvas.parentElement ? canvas.parentElement.clientHeight : 0;
+    const W = Math.max(320, (parentW || 640) - (isZettel ? 0 : 32));
+    const H = isZettel ? Math.max(600, parentH || 720) : (parentH ? Math.max(420, parentH) : 420);
     canvas.width = W * dpr; canvas.height = H * dpr;
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
     canvas.getContext('2d').scale(dpr, dpr);
 
-    // Build nodes + edges
-    const nodemap = {};
-    items.forEach(a => (a.tags || []).forEach(t => {
-        if (!nodemap[t.tag_id]) nodemap[t.tag_id] = { id: t.tag_id, name: t.name, color: t.color || '#3b82f6', count: 0 };
-        nodemap[t.tag_id].count++;
-    }));
-    const edgesMap = {};
-    items.forEach(a => {
-        const tags = a.tags || [];
-        for (let i = 0; i < tags.length; i++) for (let j = i+1; j < tags.length; j++) {
-            const key = [tags[i].tag_id, tags[j].tag_id].sort().join('-');
-            edgesMap[key] = (edgesMap[key] || 0) + 1;
-        }
-    });
-    const edgeList = Object.entries(edgesMap).map(([k, w]) => {
-        const [s, t] = k.split('-').map(Number);
-        return { s, t, w };
-    });
-    /* The layout is a 220-iteration O(n²) simulation run synchronously on the
-       main thread, and it used every theme in the corpus: 200 themes measured
-       ~500 ms, 400 themes ~2 s, every time the dashboard re-rendered.  Cap it at
-       the most-used themes — beyond that the graph is unreadable anyway — and
-       drop edges that lost an endpoint. */
-    const allNodes = Object.values(nodemap).sort((a, b) => b.count - a.count);
-    const nodes = allNodes.slice(0, NETWORK_NODE_LIMIT);
-    const kept = new Set(nodes.map(n => n.id));
-    const edges = edgeList.filter(e => kept.has(e.s) && kept.has(e.t));
-    const hiddenNodes = allNodes.length - nodes.length;
+    let nodes, edges, hiddenNodes = 0;
+    const prebuilt = opts.prebuilt || (items && typeof items === 'object' && !Array.isArray(items) && items.nodes ? items : null);
+    if (prebuilt) {
+        nodes = (prebuilt.nodes || []).map(n => ({
+            id: n.id, name: n.name,
+            color: n.color || '#60a5fa',
+            baseColor: n.color || '#60a5fa',
+            community_id: n.community_id != null ? n.community_id : null,
+            community_name: n.community_name || '',
+            community_color: n.community_color || '#60a5fa',
+            year: n.year != null ? parseInt(n.year, 10) : null,
+            tags: n.tags || [],
+            aliases: n.aliases || [],
+            anchor_quote: n.anchor_quote || '',
+            anchor_item_title: n.anchor_item_title || '',
+            betweenness: n.betweenness || 0,
+            depth: n.depth != null ? n.depth : null,
+            count: n.count || 0, r: 0, x: 0, y: 0, vx: 0, vy: 0,
+            anchored: !!n.anchored, _isZettel: !!n._isZettel,
+        }));
+        edges = (prebuilt.edges || []).map(e => ({
+            s: e.source, t: e.target, w: e.w != null ? e.w : 1,
+            color: e.color, dash: e.dash, lw: e.lw != null ? e.lw : 2,
+            label: e.label, _origin: e._origin, _rationale: e._rationale,
+            link_type: e.link_type || e.label || '',
+        }));
+    } else {
+        const itemList = Array.isArray(items) ? items : [];
+        const nodemap = {};
+        itemList.forEach(a => (a.tags || []).forEach(t => {
+            if (!nodemap[t.tag_id]) nodemap[t.tag_id] = { id: t.tag_id, name: t.name, color: t.color || '#3b82f6', count: 0 };
+            nodemap[t.tag_id].count++;
+        }));
+        const edgesMap = {};
+        itemList.forEach(a => {
+            const tags = a.tags || [];
+            for (let i = 0; i < tags.length; i++) for (let j = i+1; j < tags.length; j++) {
+                const key = [tags[i].tag_id, tags[j].tag_id].sort().join('-');
+                edgesMap[key] = (edgesMap[key] || 0) + 1;
+            }
+        });
+        const edgeList = Object.entries(edgesMap).map(([k, w]) => {
+            const [s, t] = k.split('-').map(Number);
+            return { s, t, w };
+        });
+        const allNodes = Object.values(nodemap).sort((a, b) => b.count - a.count);
+        nodes = allNodes.slice(0, NETWORK_NODE_LIMIT);
+        const kept = new Set(nodes.map(n => n.id));
+        edges = edgeList.filter(e => kept.has(e.s) && kept.has(e.t));
+        hiddenNodes = allNodes.length - nodes.length;
+    }
 
     const capNote = document.getElementById(canvasId === 'network-canvas' ? 'network-cap-note' : 'proj-network-cap-note');
     if (capNote) {
         capNote.textContent = hiddenNodes
-            ? `showing the ${nodes.length} most-used of ${allNodes.length} themes`
+            ? `showing the ${nodes.length} most-used of ${nodes.length + hiddenNodes} themes`
             : '';
     }
 
-    if (nodes.length < 2 || edges.length === 0) {
+    const empty = opts.prebuilt ? nodes.length === 0 : (nodes.length < 2 || edges.length === 0);
+    if (empty) {
         canvas.style.display = 'none';
         const emptyEl = document.getElementById(emptyId);
         if (emptyEl) emptyEl.style.display = '';
         return;
     }
 
-    // Size nodes, seed positions
-    const maxR = 28, minR = 10;
-    const maxCount = Math.max(...nodes.map(n => n.count));
-    nodes.forEach(n => {
+    // Size nodes and seed positions in an initial circle (sleek modern micro-dots)
+    const maxR = 7.5, minR = 4.5;
+    const maxCount = Math.max(1, ...nodes.map(n => n.count));
+    const angleStep = (2 * Math.PI) / Math.max(1, nodes.length);
+    nodes.forEach((n, i) => {
         n.r = minR + (n.count / maxCount) * (maxR - minR);
-        n.x = W/2 + (Math.random() - 0.5) * W * 0.55;
-        n.y = H/2 + (Math.random() - 0.5) * H * 0.55;
-        n.vx = 0; n.vy = 0;
+        const ang = i * angleStep;
+        const dist = Math.min(W, H) * 0.22 + (Math.random() - 0.5) * 30;
+        n.x = W / 2 + Math.cos(ang) * dist;
+        n.y = H / 2 + Math.sin(ang) * dist;
+        n.vx = (Math.random() - 0.5) * 1.5;
+        n.vy = (Math.random() - 0.5) * 1.5;
     });
-    const maxW = Math.max(...edges.map(e => e.w));
+
+    const maxW = Math.max(1, ...edges.map(e => e.w || 1));
     const idxMap = {};
-    nodes.forEach((n, i) => idxMap[n.id] = i);
+    const adjMap = {};
+    nodes.forEach((n, i) => {
+        idxMap[n.id] = i;
+        adjMap[n.id] = new Set();
+    });
+    edges.forEach(e => {
+        if (adjMap[e.s]) adjMap[e.s].add(e.t);
+        if (adjMap[e.t]) adjMap[e.t].add(e.s);
+    });
 
-    // Force simulation (pre-computed)
-    for (let iter = 0; iter < 220; iter++) {
-        const cool = 1 - iter / 220;
-        for (let i = 0; i < nodes.length; i++) for (let j = i+1; j < nodes.length; j++) {
-            const dx = nodes[j].x - nodes[i].x, dy = nodes[j].y - nodes[i].y;
-            const d = Math.sqrt(dx*dx + dy*dy) || 1;
-            const f = 5000 / (d * d);
-            nodes[i].vx -= dx/d*f; nodes[i].vy -= dy/d*f;
-            nodes[j].vx += dx/d*f; nodes[j].vy += dy/d*f;
-        }
-        edges.forEach(e => {
-            const a = nodes[idxMap[e.s]], b = nodes[idxMap[e.t]];
-            if (!a || !b) return;
-            const dx = b.x - a.x, dy = b.y - a.y;
-            const d = Math.sqrt(dx*dx + dy*dy) || 1;
-            const target = 90 + (1 - e.w/maxW) * 70;
-            const f = (d - target) * 0.07;
-            a.vx += dx/d*f; a.vy += dy/d*f;
-            b.vx -= dx/d*f; b.vy -= dy/d*f;
-        });
-        nodes.forEach(n => { n.vx += (W/2 - n.x) * 0.012; n.vy += (H/2 - n.y) * 0.012; });
-        nodes.forEach(n => {
-            n.x += n.vx * (0.85 * cool + 0.15);
-            n.y += n.vy * (0.85 * cool + 0.15);
-            n.vx *= 0.42; n.vy *= 0.42;
-        });
-    }
-
-    // Center the settled layout
-    const bx0 = Math.min(...nodes.map(n => n.x - n.r - 10));
-    const bx1 = Math.max(...nodes.map(n => n.x + n.r + 10));
-    const by0 = Math.min(...nodes.map(n => n.y - n.r - 10));
-    const by1 = Math.max(...nodes.map(n => n.y + n.r + 10));
-    const ox = W/2 - (bx0 + bx1)/2;
-    const oy = H/2 - (by0 + by1)/2;
-    nodes.forEach(n => { n.x += ox; n.y += oy; });
+    // Luminous edge flow particles
+    const particles = edges.map((e, idx) => ({
+        s: e.s, t: e.t,
+        progress: (idx * 0.23) % 1.0,
+        speed: 0.0025 + Math.min(0.004, (e.w || 1) * 0.001),
+        color: e.color || '#60a5fa',
+    }));
 
     _netState = {
-        canvas, nodes, edgeList: edges, idxMap, maxW,
-        W, H,
-        edgeStyle: 'straight',
+        canvas, nodes, edgeList: edges, idxMap, adjMap, maxW,
+        W, H, particles,
+        edgeStyle: 'curved',
         edgeDash: 'solid',
         edgeColor: 'auto',
+        onNodeClick: opts.onNodeClick || drillIntoTheme,
         tr: { scale: 1, tx: 0, ty: 0 },
         dragging: null,
         panning: false,
         panStart: null,
+        hoveredNode: null,
+        searchQuery: '',
+        alpha: 1.0,
+        particlesEnabled: true,
+        showLabels: true,
+        clustersEnabled: !!window.appState?.zettelGraphClustersEnabled,
+        timelineMaxYear: window.appState?.zettelGraphTimelineMax || null,
+        activeLinkTypes: window.appState?.zettelGraphActiveLinkTypes || null,
+        tooltipEl: document.getElementById(isZettel ? 'zettel-graph-tooltip' : null),
     };
 
-    _netDraw();
+    _netStartAnimation();
     _netCleanup = _netAttachEvents(canvas);
+}
+
+function _netStartAnimation() {
+    if (_netAnimId) cancelAnimationFrame(_netAnimId);
+    let lastTime = performance.now();
+    const loop = (now) => {
+        if (!_netState) return;
+        const dt = Math.min(32, now - lastTime);
+        lastTime = now;
+
+        const isMoving = _netStepPhysics(dt);
+        if (_netState.particlesEnabled) _netUpdateParticles();
+        _netDraw();
+
+        if (isMoving || _netState.particlesEnabled || _netState.dragging || _netState.panning) {
+            _netAnimId = requestAnimationFrame(loop);
+        } else {
+            _netAnimId = null;
+        }
+    };
+    _netAnimId = requestAnimationFrame(loop);
+}
+
+function _netWakeAnimation() {
+    if (!_netAnimId && _netState) {
+        _netStartAnimation();
+    }
+}
+
+function _netUpdateParticles() {
+    if (!_netState || !_netState.particles) return;
+    _netState.particles.forEach(p => {
+        p.progress += p.speed;
+        if (p.progress >= 1.0) p.progress -= 1.0;
+    });
+}
+
+function _netStepPhysics(dt) {
+    if (!_netState) return false;
+    const { nodes, edgeList, idxMap, maxW, W, H } = _netState;
+    let totalVelocity = 0;
+
+    if (_netState.alpha > 0.004) {
+        const a = _netState.alpha;
+        // Node-node repulsion (Coulomb)
+        for (let i = 0; i < nodes.length; i++) {
+            for (let j = i + 1; j < nodes.length; j++) {
+                const ni = nodes[i], nj = nodes[j];
+                const dx = nj.x - ni.x, dy = nj.y - ni.y;
+                const d2 = dx * dx + dy * dy || 1;
+                const d = Math.sqrt(d2);
+                const f = (1800 / (d2 + 80)) * a;
+                ni.vx -= (dx / d) * f; ni.vy -= (dy / d) * f;
+                nj.vx += (dx / d) * f; nj.vy += (dy / d) * f;
+            }
+        }
+        // Spring forces along edges (Hooke's Law)
+        edgeList.forEach(e => {
+            const na = nodes[idxMap[e.s]], nb = nodes[idxMap[e.t]];
+            if (!na || !nb) return;
+            const dx = nb.x - na.x, dy = nb.y - na.y;
+            const d = Math.sqrt(dx * dx + dy * dy) || 1;
+            const target = 70 + (1 - (e.w || 1) / maxW) * 45;
+            const f = (d - target) * 0.05 * a;
+            na.vx += (dx / d) * f; na.vy += (dy / d) * f;
+            nb.vx -= (dx / d) * f; nb.vy -= (dy / d) * f;
+        });
+        // Center gravity
+        nodes.forEach(n => {
+            n.vx += (W / 2 - n.x) * 0.008 * a;
+            n.vy += (H / 2 - n.y) * 0.008 * a;
+        });
+        // Position integration with velocity damping
+        nodes.forEach(n => {
+            if (_netState.dragging === n) {
+                n.vx = 0; n.vy = 0;
+                return;
+            }
+            n.x += n.vx;
+            n.y += n.vy;
+            n.vx *= 0.78;
+            n.vy *= 0.78;
+            totalVelocity += Math.abs(n.vx) + Math.abs(n.vy);
+        });
+
+        _netState.alpha *= 0.985;
+    }
+
+    return _netState.alpha > 0.004 || totalVelocity > 0.08 || _netState.dragging != null;
 }
 
 function _netDraw() {
     if (!_netState) return;
-    const { canvas, nodes, edgeList, idxMap, maxW, edgeStyle, tr, W, H } = _netState;
+    const { canvas, nodes, edgeList, idxMap, adjMap, maxW, edgeStyle, tr, W, H, hoveredNode, searchQuery } = _netState;
     const ctx = canvas.getContext('2d');
 
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    const activeNoteId = window.appState?.activeZettelNoteId;
+
+    // 1. Celestial background
     ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = isDark ? '#090d16' : '#f8fafc';
+    ctx.fillRect(0, 0, W, H);
+
+    const ambientGrad = ctx.createRadialGradient(W / 2, H / 2, 20, W / 2, H / 2, Math.max(W, H) * 0.75);
+    ambientGrad.addColorStop(0, isDark ? 'rgba(23, 37, 84, 0.25)' : 'rgba(238, 242, 255, 0.6)');
+    ambientGrad.addColorStop(1, isDark ? 'rgba(9, 13, 22, 0.98)' : 'rgba(248, 250, 252, 0.98)');
+    ctx.fillStyle = ambientGrad;
+    ctx.fillRect(0, 0, W, H);
+
     ctx.save();
     ctx.translate(tr.tx, tr.ty);
     ctx.scale(tr.scale, tr.scale);
 
-    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-    const autoCol  = isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.16)';
-    const edgeCol  = _netState.edgeColor === 'auto' ? autoCol : _netState.edgeColor;
-    const edgeLbl  = isDark ? 'rgba(255,255,255,0.5)'  : 'rgba(0,0,0,0.45)';
-    const textCol  = isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.8)';
-    const dashMap  = { solid: [], dashed: [8, 5], dotted: [2, 4] };
-    const lineDash = dashMap[_netState.edgeDash] || [];
+    // 2. Ambient dot matrix
+    const gridSize = 28;
+    const gx0 = Math.floor((-tr.tx / tr.scale) / gridSize) * gridSize;
+    const gy0 = Math.floor((-tr.ty / tr.scale) / gridSize) * gridSize;
+    const gx1 = Math.ceil(((W - tr.tx) / tr.scale) / gridSize) * gridSize;
+    const gy1 = Math.ceil(((H - tr.ty) / tr.scale) / gridSize) * gridSize;
+    ctx.fillStyle = isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(15, 23, 42, 0.04)';
+    for (let x = gx0; x <= gx1; x += gridSize) {
+        for (let y = gy0; y <= gy1; y += gridSize) {
+            ctx.beginPath();
+            ctx.arc(x, y, 0.8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
 
-    // Edges
+    // 2.5 Thematic Community Cluster Clouds & Centroid Badges
+    if (_netState.clustersEnabled && nodes.length > 0) {
+        const commGroups = {};
+        nodes.forEach(n => {
+            if (n.community_id == null) return;
+            if (!commGroups[n.community_id]) commGroups[n.community_id] = [];
+            commGroups[n.community_id].push(n);
+        });
+
+        Object.entries(commGroups).forEach(([cid, group]) => {
+            if (group.length < 1) return;
+            const commColor = group[0].community_color || '#60a5fa';
+            const commName = group[0].community_name || `Cluster ${Number(cid) + 1}`;
+
+            let sumX = 0, sumY = 0;
+            group.forEach(n => { sumX += n.x; sumY += n.y; });
+            const cx = sumX / group.length;
+            const cy = sumY / group.length;
+
+            let maxDist = 24;
+            group.forEach(n => {
+                const d = Math.sqrt((n.x - cx) ** 2 + (n.y - cy) ** 2);
+                if (d > maxDist) maxDist = d;
+            });
+            const haloR = maxDist + 24;
+
+            ctx.save();
+            const haloGrad = ctx.createRadialGradient(cx, cy, 6, cx, cy, haloR);
+            haloGrad.addColorStop(0, _netHexToRgba(commColor, 0.12));
+            haloGrad.addColorStop(0.7, _netHexToRgba(commColor, 0.04));
+            haloGrad.addColorStop(1, _netHexToRgba(commColor, 0.0));
+            ctx.fillStyle = haloGrad;
+            ctx.beginPath();
+            ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Cluster Centroid Title Badge
+            if (group.length >= 2) {
+                ctx.font = '600 9px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+                const pillW = ctx.measureText(commName).width + 18;
+                const pillH = 16;
+                const pillX = cx - pillW / 2;
+                const pillY = cy - haloR + 4;
+
+                ctx.fillStyle = isDark ? 'rgba(15, 23, 42, 0.88)' : 'rgba(255, 255, 255, 0.92)';
+                ctx.strokeStyle = _netHexToRgba(commColor, 0.45);
+                ctx.lineWidth = 0.9;
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(pillX, pillY, pillW, pillH, 8);
+                else ctx.rect(pillX, pillY, pillW, pillH);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(pillX + 7, pillY + pillH / 2, 2.5, 0, Math.PI * 2);
+                ctx.fillStyle = commColor;
+                ctx.fill();
+
+                ctx.fillStyle = isDark ? 'rgba(241, 245, 249, 0.95)' : 'rgba(15, 23, 42, 0.95)';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(commName, pillX + 13, pillY + pillH / 2);
+            }
+            ctx.restore();
+        });
+    }
+
+    const autoCol = isDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.12)';
+    const dashMap = { solid: [], dashed: [6, 4], dotted: [2, 3] };
+    const globalDash = dashMap[_netState.edgeDash] || [];
+
+    // 3. Edges: Sleek hairline connections (with link type & timeline filter)
     edgeList.forEach(e => {
         const na = nodes[idxMap[e.s]], nb = nodes[idxMap[e.t]];
         if (!na || !nb) return;
-        const lw = Math.max(1, e.w / maxW * 7);
-        ctx.beginPath();
-        ctx.strokeStyle = edgeCol;
-        ctx.lineWidth = lw;
-        ctx.setLineDash(lineDash);
 
-        let labelX, labelY;
+        // Link type filter
+        if (_netState.activeLinkTypes && _netState.activeLinkTypes.size > 0) {
+            const lType = e.link_type || e.label || 'manual';
+            const origin = e._origin || 'manual';
+            if (!_netState.activeLinkTypes.has(lType) && !_netState.activeLinkTypes.has(origin)) {
+                return;
+            }
+        }
+
+        // Timeline filter
+        if (_netState.timelineMaxYear) {
+            if ((na.year && na.year > _netState.timelineMaxYear) || (nb.year && nb.year > _netState.timelineMaxYear)) {
+                return;
+            }
+        }
+
+        const isEdgeConnectedToHover = hoveredNode && (hoveredNode.id === na.id || hoveredNode.id === nb.id);
+        const isDimmed = hoveredNode && !isEdgeConnectedToHover;
+        const edgeAlpha = isDimmed ? 0.06 : (isEdgeConnectedToHover ? 0.95 : 0.4);
+
+        const dx = nb.x - na.x, dy = nb.y - na.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const sx = na.x + (dx / len) * (na.r + 1);
+        const sy = na.y + (dy / len) * (na.r + 1);
+        const tx = nb.x - (dx / len) * (nb.r + 1);
+        const ty = nb.y - (dy / len) * (nb.r + 1);
+
+        let eDash = globalDash;
+        if (Array.isArray(e.dash)) eDash = e.dash;
+        else if (e.dash === null) eDash = [];
+
+        ctx.beginPath();
+        let midX = (sx + tx) / 2, midY = (sy + ty) / 2;
 
         if (edgeStyle === 'curved') {
-            const dx = nb.x - na.x, dy = nb.y - na.y;
-            const len = Math.sqrt(dx*dx + dy*dy) || 1;
-            const bend = Math.min(len * 0.35, 70);
-            const cpx = (na.x + nb.x)/2 - (dy/len) * bend;
-            const cpy = (na.y + nb.y)/2 + (dx/len) * bend;
-            ctx.moveTo(na.x, na.y);
-            ctx.quadraticCurveTo(cpx, cpy, nb.x, nb.y);
-            // label at curve midpoint (t=0.5 of quadratic)
-            labelX = 0.25*na.x + 0.5*cpx + 0.25*nb.x;
-            labelY = 0.25*na.y + 0.5*cpy + 0.25*nb.y;
-        } else if (edgeStyle === 'elbow') {
-            const mx = (na.x + nb.x) / 2;
-            ctx.moveTo(na.x, na.y);
-            ctx.lineTo(mx, na.y);
-            ctx.lineTo(mx, nb.y);
-            ctx.lineTo(nb.x, nb.y);
-            labelX = mx; labelY = na.y;
+            const bend = Math.min(len * 0.18, 36);
+            const cpx = (sx + tx) / 2 - (dy / len) * bend;
+            const cpy = (sy + ty) / 2 + (dx / len) * bend;
+            ctx.moveTo(sx, sy);
+            ctx.quadraticCurveTo(cpx, cpy, tx, ty);
+            midX = 0.25 * sx + 0.5 * cpx + 0.25 * tx;
+            midY = 0.25 * sy + 0.5 * cpy + 0.25 * ty;
         } else {
-            ctx.moveTo(na.x, na.y);
-            ctx.lineTo(nb.x, nb.y);
-            labelX = (na.x + nb.x)/2; labelY = (na.y + nb.y)/2;
+            ctx.moveTo(sx, sy);
+            ctx.lineTo(tx, ty);
         }
+
+        const nodeColorA = _netState.clustersEnabled && na.community_color ? na.community_color : na.color;
+        const nodeColorB = _netState.clustersEnabled && nb.community_color ? nb.community_color : nb.color;
+        const edgeGrad = ctx.createLinearGradient(sx, sy, tx, ty);
+        const colA = e.color || nodeColorA || '#60a5fa';
+        const colB = e.color || nodeColorB || '#60a5fa';
+        edgeGrad.addColorStop(0, _netHexToRgba(colA, edgeAlpha));
+        edgeGrad.addColorStop(1, _netHexToRgba(colB, edgeAlpha));
+
+        ctx.strokeStyle = edgeGrad;
+        ctx.lineWidth = isEdgeConnectedToHover ? 1.8 : 1.0;
+        ctx.setLineDash(eDash);
         ctx.stroke();
 
-        if (e.w > 1) {
-            ctx.font = '9px sans-serif';
-            ctx.fillStyle = edgeLbl;
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText(e.w, labelX, labelY);
+        // Edge label pill (relation type)
+        if (e.label && (isEdgeConnectedToHover || (tr.scale > 0.95 && !isDimmed))) {
+            ctx.save();
+            ctx.setLineDash([]);
+            ctx.font = '500 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            const labelText = String(e.label);
+            const textWidth = ctx.measureText(labelText).width;
+            const pw = textWidth + 6, ph = 12;
+            ctx.fillStyle = isDark ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.94)';
+            ctx.strokeStyle = _netHexToRgba(e.color || '#60a5fa', isEdgeConnectedToHover ? 0.8 : 0.3);
+            ctx.lineWidth = 0.7;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(midX - pw / 2, midY - ph / 2, pw, ph, 2.5);
+            else ctx.rect(midX - pw / 2, midY - ph / 2, pw, ph);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.95)' : 'rgba(30, 41, 59, 0.95)';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(labelText, midX, midY);
+            ctx.restore();
         }
     });
 
     ctx.setLineDash([]);
 
-    // Nodes
+    // 4. Flow Particles along edges
+    if (_netState.particlesEnabled && _netState.particles) {
+        _netState.particles.forEach(p => {
+            const na = nodes[idxMap[p.s]], nb = nodes[idxMap[p.t]];
+            if (!na || !nb) return;
+            if (_netState.timelineMaxYear && ((na.year && na.year > _netState.timelineMaxYear) || (nb.year && nb.year > _netState.timelineMaxYear))) {
+                return;
+            }
+            const isDimmed = hoveredNode && (hoveredNode.id !== na.id && hoveredNode.id !== nb.id);
+            if (isDimmed) return;
+
+            const t = p.progress;
+            let px, py;
+            if (edgeStyle === 'curved') {
+                const dx = nb.x - na.x, dy = nb.y - na.y;
+                const len = Math.sqrt(dx * dx + dy * dy) || 1;
+                const bend = Math.min(len * 0.18, 36);
+                const cpx = (na.x + nb.x) / 2 - (dy / len) * bend;
+                const cpy = (na.y + nb.y) / 2 + (dx / len) * bend;
+                px = (1 - t) * (1 - t) * na.x + 2 * (1 - t) * t * cpx + t * t * nb.x;
+                py = (1 - t) * (1 - t) * na.y + 2 * (1 - t) * t * cpy + t * t * nb.y;
+            } else {
+                px = na.x + (nb.x - na.x) * t;
+                py = na.y + (nb.y - na.y) * t;
+            }
+
+            ctx.beginPath();
+            ctx.arc(px, py, 1.4, 0, Math.PI * 2);
+            ctx.fillStyle = p.color;
+            ctx.shadowColor = p.color;
+            ctx.shadowBlur = 6;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        });
+    }
+
+    // 5. Nodes: Sleek minimalist micro-dots
     nodes.forEach(n => {
-        ctx.shadowColor = n.color; ctx.shadowBlur = 10;
+        // Timeline filter
+        const isExcludedByTime = _netState.timelineMaxYear && n.year && n.year > _netState.timelineMaxYear;
+        const isHovered = hoveredNode && hoveredNode.id === n.id;
+        const isNeighbour = hoveredNode && adjMap[hoveredNode.id]?.has(n.id);
+        const isActive = activeNoteId && n.id === activeNoteId;
+        const isMatched = searchQuery && (n.name || '').toLowerCase().includes(searchQuery.toLowerCase());
+
+        let alpha = 1.0;
+        if (isExcludedByTime) {
+            alpha = 0.08;
+        } else if (hoveredNode) {
+            if (isHovered || isNeighbour) alpha = 1.0;
+            else alpha = 0.14;
+        } else if (searchQuery && !isMatched) {
+            alpha = 0.18;
+        }
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+
+        const nodeColor = (_netState.clustersEnabled && n.community_color) ? n.community_color : (n.color || '#60a5fa');
+        const baseR = n.r;
+        const currentR = isHovered ? (baseR + 2.0) : (isActive ? (baseR + 1.0) : baseR);
+
+        // Delicate soft aura on hover / active
+        if (isHovered || isActive || isMatched) {
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, currentR + (isHovered ? 4.0 : 2.5), 0, Math.PI * 2);
+            ctx.fillStyle = _netHexToRgba(nodeColor, isHovered ? 0.28 : 0.16);
+            ctx.fill();
+        }
+
+        // Evidence-anchored micro outer ring
+        if (n.anchored) {
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, currentR + 1.8, 0, Math.PI * 2);
+            ctx.strokeStyle = _netHexToRgba(nodeColor, 0.7);
+            ctx.lineWidth = 0.8;
+            ctx.stroke();
+        }
+
+        // Sleek solid micro-dot
         ctx.beginPath();
-        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-        ctx.fillStyle = n.color + 'cc';
+        ctx.arc(n.x, n.y, currentR, 0, Math.PI * 2);
+        ctx.fillStyle = nodeColor;
+        ctx.shadowColor = nodeColor;
+        ctx.shadowBlur = (isHovered || isActive) ? 8 : 2;
         ctx.fill();
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = n.color; ctx.lineWidth = 2;
+
+        // Subtle crisp border
+        ctx.strokeStyle = isDark ? 'rgba(255, 255, 255, 0.75)' : 'rgba(255, 255, 255, 0.9)';
+        ctx.lineWidth = 0.7;
         ctx.stroke();
-        // Count
-        ctx.font = `bold ${Math.max(8, n.r * 0.62)}px sans-serif`;
-        ctx.fillStyle = '#fff';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(n.count, n.x, n.y);
-        // Label below
-        ctx.font = `bold ${Math.max(9, Math.min(12, n.r))}px sans-serif`;
-        ctx.fillStyle = textCol;
-        ctx.textBaseline = 'top';
-        const label = n.name.length > 13 ? n.name.slice(0, 12) + '…' : n.name;
-        ctx.fillText(label, n.x, n.y + n.r + 3);
+
+        // Modern clean typography label (reduced, minimalist sizing)
+        if (_netState.showLabels && !isExcludedByTime) {
+            const fontSz = isHovered ? 9.5 : 8.5;
+            ctx.font = `500 ${fontSz}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+            const rawLabel = n.name || 'Untitled';
+            const label = isHovered ? rawLabel : (rawLabel.length > 24 ? rawLabel.slice(0, 22) + '…' : rawLabel);
+
+            ctx.shadowColor = isDark ? 'rgba(9, 13, 22, 0.95)' : 'rgba(248, 250, 252, 0.95)';
+            ctx.shadowBlur = 3;
+            ctx.fillStyle = isDark
+                ? (isHovered ? '#ffffff' : 'rgba(203, 213, 225, 0.80)')
+                : (isHovered ? '#0f172a' : 'rgba(51, 65, 85, 0.85)');
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(label, n.x, n.y + currentR + 3);
+            ctx.shadowBlur = 0;
+        }
+
+        ctx.restore();
     });
 
     ctx.restore();
@@ -3795,15 +4144,16 @@ function _netCanvasXY(canvas, e) {
     const { scale, tx, ty } = _netState.tr;
     return {
         x: (e.clientX - rect.left - tx) / scale,
-        y: (e.clientY - rect.top  - ty) / scale,
+        y: (e.clientY - rect.top - ty) / scale,
     };
 }
 
 function _netHitNode(x, y) {
     if (!_netState) return null;
-    for (const n of _netState.nodes) {
+    for (let i = _netState.nodes.length - 1; i >= 0; i--) {
+        const n = _netState.nodes[i];
         const dx = x - n.x, dy = y - n.y;
-        if (dx*dx + dy*dy <= n.r * n.r) return n;
+        if (dx * dx + dy * dy <= (n.r + 10) * (n.r + 10)) return n;
     }
     return null;
 }
@@ -3814,22 +4164,23 @@ function _netAttachEvents(canvas) {
         const rect = canvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
-        const factor = e.deltaY < 0 ? 1.13 : 1/1.13;
+        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
         const tr = _netState.tr;
         tr.tx = mx - (mx - tr.tx) * factor;
         tr.ty = my - (my - tr.ty) * factor;
-        tr.scale = Math.max(0.15, Math.min(6, tr.scale * factor));
-        _netDraw();
+        tr.scale = Math.max(0.12, Math.min(8, tr.scale * factor));
+        _netWakeAnimation();
     };
 
     const onMouseDown = e => {
         const { x, y } = _netCanvasXY(canvas, e);
         const hit = _netHitNode(x, y);
-        // Remember where the press landed so mouseup can tell a click from a drag.
         _netState.pressed = { node: hit, mx: e.clientX, my: e.clientY };
         if (hit) {
             _netState.dragging = hit;
+            _netState.alpha = Math.max(_netState.alpha, 0.45);
             canvas.style.cursor = 'grabbing';
+            _netWakeAnimation();
         } else {
             _netState.panning = true;
             _netState.panStart = { mx: e.clientX, my: e.clientY, tx: _netState.tr.tx, ty: _netState.tr.ty };
@@ -3839,18 +4190,27 @@ function _netAttachEvents(canvas) {
 
     const onMouseMove = e => {
         if (!_netState) return;
+        const { x, y } = _netCanvasXY(canvas, e);
+
         if (_netState.dragging) {
-            const { x, y } = _netCanvasXY(canvas, e);
             _netState.dragging.x = x;
             _netState.dragging.y = y;
-            _netDraw();
+            _netState.alpha = Math.max(_netState.alpha, 0.35);
+            _netWakeAnimation();
         } else if (_netState.panning && _netState.panStart) {
             _netState.tr.tx = _netState.panStart.tx + (e.clientX - _netState.panStart.mx);
             _netState.tr.ty = _netState.panStart.ty + (e.clientY - _netState.panStart.my);
-            _netDraw();
+            _netWakeAnimation();
         } else {
-            const { x, y } = _netCanvasXY(canvas, e);
-            canvas.style.cursor = _netHitNode(x, y) ? 'grab' : 'default';
+            const hit = _netHitNode(x, y);
+            if (hit !== _netState.hoveredNode) {
+                _netState.hoveredNode = hit;
+                canvas.style.cursor = hit ? 'pointer' : 'default';
+                _netUpdateTooltip(hit, e);
+                _netWakeAnimation();
+            } else if (hit) {
+                _netUpdateTooltip(hit, e);
+            }
         }
     };
 
@@ -3860,41 +4220,160 @@ function _netAttachEvents(canvas) {
         _netState.pressed = null;
         _netState.dragging = null;
         _netState.panning = false;
-        canvas.style.cursor = 'default';
-        // A press and release on the same node, without dragging it, means
-        // "show me this theme's annotations".
-        if (pressed?.node && e && Math.abs(e.clientX - pressed.mx) < 4 && Math.abs(e.clientY - pressed.my) < 4) {
-            drillIntoTheme(pressed.node.id);
+        canvas.style.cursor = _netState.hoveredNode ? 'pointer' : 'default';
+
+        if (pressed?.node && e && Math.abs(e.clientX - pressed.mx) < 5 && Math.abs(e.clientY - pressed.my) < 5) {
+            const click = _netState.onNodeClick || drillIntoTheme;
+            click(pressed.node.id);
         }
+    };
+
+    const onMouseLeave = () => {
+        if (!_netState) return;
+        _netState.hoveredNode = null;
+        _netState.dragging = null;
+        _netState.panning = false;
+        _netUpdateTooltip(null);
+        _netWakeAnimation();
     };
 
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
+    let resizeObserver = null;
+    const dpr = window.devicePixelRatio || 1;
+    if (window.ResizeObserver && canvas.parentElement) {
+        resizeObserver = new ResizeObserver(() => {
+            if (!_netState) return;
+            const pw = canvas.parentElement.clientWidth;
+            const ph = canvas.parentElement.clientHeight;
+            if (!pw || !ph) return;
+            const isZ = canvas.id === 'zettel-network-canvas';
+            const newW = Math.max(320, pw - (isZ ? 0 : 32));
+            const newH = isZ ? Math.max(600, ph) : Math.max(420, ph);
+            if (Math.abs(newW - _netState.W) > 4 || Math.abs(newH - _netState.H) > 4) {
+                _netState.W = newW;
+                _netState.H = newH;
+                canvas.width = newW * dpr;
+                canvas.height = newH * dpr;
+                canvas.style.width = newW + 'px';
+                canvas.style.height = newH + 'px';
+                canvas.getContext('2d').scale(dpr, dpr);
+                _netWakeAnimation();
+            }
+        });
+        resizeObserver.observe(canvas.parentElement);
+    }
 
     return () => {
+        if (resizeObserver) resizeObserver.disconnect();
         canvas.removeEventListener('wheel', onWheel);
         canvas.removeEventListener('mousedown', onMouseDown);
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
+        canvas.removeEventListener('mouseleave', onMouseLeave);
     };
+}
+
+function _netUpdateTooltip(node, e) {
+    const tip = _netState?.tooltipEl;
+    if (!tip) return;
+    if (!node || !e) {
+        tip.style.display = 'none';
+        return;
+    }
+    const canvasRect = _netState.canvas.getBoundingClientRect();
+    const x = e.clientX - canvasRect.left + 16;
+    const y = e.clientY - canvasRect.top + 16;
+
+    const neighbourCount = _netState.adjMap[node.id]?.size || 0;
+    const commHtml = node.community_name ? `<span class="graph-tip-badge community" style="background:${_netHexToRgba(node.community_color || '#60a5fa', 0.18)}; color:${node.community_color || '#60a5fa'}; border: 1px solid ${_netHexToRgba(node.community_color || '#60a5fa', 0.35)};">${escapeHtml(node.community_name)}</span>` : '';
+    const yearHtml = node.year ? `<span class="graph-tip-badge year">${node.year}</span>` : '';
+    const hubHtml = node.count >= 3 ? `<span class="graph-tip-badge hub">Hub (${node.count})</span>` : '';
+
+    tip.innerHTML = `
+        <div class="graph-tip-header">
+            <span class="graph-tip-title">${escapeHtml(node.name || 'Untitled')}</span>
+            ${node.anchored ? '<span class="graph-tip-badge anchored">Anchored</span>' : '<span class="graph-tip-badge">Note</span>'}
+        </div>
+        <div class="graph-tip-badges">${commHtml}${yearHtml}${hubHtml}</div>
+        <div class="graph-tip-meta">${neighbourCount} direct link${neighbourCount !== 1 ? 's' : ''}${node.betweenness ? ` · Centrality ${(node.betweenness * 100).toFixed(1)}%` : ''}</div>
+        ${node.anchor_quote ? `<div class="graph-tip-quote">“${escapeHtml(node.anchor_quote.slice(0, 110))}…”</div>` : ''}
+        ${node.anchor_item_title ? `<div class="graph-tip-source">📄 ${escapeHtml(node.anchor_item_title.slice(0, 50))}</div>` : ''}
+        <div class="graph-tip-action">Click node to inspect & edit note</div>
+    `;
+    tip.style.left = `${Math.min(x, canvasRect.width - 260)}px`;
+    tip.style.top = `${Math.min(y, canvasRect.height - 150)}px`;
+    tip.style.display = 'block';
+}
+
+function _netSearch(query) {
+    if (!_netState) return;
+    _netState.searchQuery = (query || '').trim();
+    _netWakeAnimation();
+}
+
+function _netReheat() {
+    if (!_netState) return;
+    _netState.alpha = 1.0;
+    _netState.nodes.forEach(n => {
+        n.vx = (Math.random() - 0.5) * 8;
+        n.vy = (Math.random() - 0.5) * 8;
+    });
+    _netWakeAnimation();
+}
+
+function _netToggleParticles(btn) {
+    if (!_netState) return;
+    _netState.particlesEnabled = !_netState.particlesEnabled;
+    if (btn) btn.classList.toggle('active', _netState.particlesEnabled);
+    _netWakeAnimation();
+}
+
+function _netToggleClusters(btn) {
+    if (!_netState) return;
+    _netState.clustersEnabled = !_netState.clustersEnabled;
+    if (window.appState) window.appState.zettelGraphClustersEnabled = _netState.clustersEnabled;
+    if (btn) btn.classList.toggle('active', _netState.clustersEnabled);
+    _netWakeAnimation();
+}
+
+function _netSetTimelineYear(year) {
+    if (!_netState) return;
+    _netState.timelineMaxYear = year ? parseInt(year, 10) : null;
+    if (window.appState) window.appState.zettelGraphTimelineMax = _netState.timelineMaxYear;
+    _netWakeAnimation();
+}
+
+function _netToggleLinkType(linkType) {
+    if (!_netState) return;
+    if (!_netState.activeLinkTypes) {
+        _netState.activeLinkTypes = new Set(['supports', 'contradicts', 'extends', 'refines', 'questions', 'exemplifies', 'shared_evidence', 'shared_theme', 'semantic']);
+    }
+    if (_netState.activeLinkTypes.has(linkType)) {
+        _netState.activeLinkTypes.delete(linkType);
+    } else {
+        _netState.activeLinkTypes.add(linkType);
+    }
+    if (window.appState) window.appState.zettelGraphActiveLinkTypes = _netState.activeLinkTypes;
+    _netWakeAnimation();
 }
 
 function _netSetEdge(style, btn) {
     if (!_netState) return;
     _netState.edgeStyle = style;
     document.querySelectorAll('.network-ctrl-btn[data-edge]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    _netDraw();
+    if (btn) btn.classList.add('active');
+    _netWakeAnimation();
 }
 
 function _netSetDash(dash, btn) {
     if (!_netState) return;
     _netState.edgeDash = dash;
     document.querySelectorAll('.network-ctrl-btn[data-dash]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    _netDraw();
+    if (btn) btn.classList.add('active');
+    _netWakeAnimation();
 }
 
 function _netSetColor(color) {
@@ -3902,7 +4381,7 @@ function _netSetColor(color) {
     _netState.edgeColor = color;
     const circle = document.getElementById('net-color-circle');
     if (circle) circle.style.background = color;
-    _netDraw();
+    _netWakeAnimation();
 }
 
 function _netZoom(delta) {
@@ -3913,13 +4392,25 @@ function _netZoom(delta) {
     tr.tx = cx - (cx - tr.tx) * factor;
     tr.ty = cy - (cy - tr.ty) * factor;
     tr.scale = Math.max(0.15, Math.min(6, tr.scale * factor));
-    _netDraw();
+    _netWakeAnimation();
 }
 
 function _netZoomFit() {
-    if (!_netState) return;
-    _netState.tr = { scale: 1, tx: 0, ty: 0 };
-    _netDraw();
+    if (!_netState || !_netState.nodes.length) return;
+    const { nodes, W, H } = _netState;
+    const minX = Math.min(...nodes.map(n => n.x - n.r - 20));
+    const maxX = Math.max(...nodes.map(n => n.x + n.r + 20));
+    const minY = Math.min(...nodes.map(n => n.y - n.r - 20));
+    const maxY = Math.max(...nodes.map(n => n.y + n.r + 20));
+    const bw = maxX - minX || 1;
+    const bh = maxY - minY || 1;
+    const scale = Math.max(0.3, Math.min(2.5, Math.min(W / bw, H / bh) * 0.85));
+    _netState.tr = {
+        scale,
+        tx: W / 2 - ((minX + maxX) / 2) * scale,
+        ty: H / 2 - ((minY + maxY) / 2) * scale,
+    };
+    _netWakeAnimation();
 }
 
 // Rows rendered at once; every match is still counted and reported.

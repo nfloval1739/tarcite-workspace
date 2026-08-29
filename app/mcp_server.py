@@ -635,6 +635,218 @@ async def set_item_notes(
     return {"status": "updated", "item_key": item_key, **(await _to_thread(get_item_notes, item_key) or {"item_key": item_key})}
 
 
+# ── write tools: zettelkasten notes ──────────────────────────────────────────
+
+
+@mcp.tool()
+async def create_note(
+    title: str,
+    body_md: str = "",
+    tags: Optional[List[str]] = None,
+    aliases: Optional[List[str]] = None,
+    anchor_annotation_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Create a new atomic zettelkasten note (Markdown body) in the Notes tab,
+    optionally anchored to a PDF annotation so the claim is tied to its evidence.
+    The note is also written as a real ``.md`` file on disk (Obsidian interop).
+
+    Args:
+        title: The note title (required).
+        body_md: The note body in Markdown. Use ``[[Other Note Title]]`` for
+            wikilinks to other notes.
+        tags: Optional free-text zettel tags (NOT theme tags).
+        aliases: Optional Obsidian aliases for the note.
+        anchor_annotation_id: Optional annotation_id to anchor this note to
+            (ties the claim to the highlighted passage).
+    """
+    from app.repositories.zettel import create_note as _create_note, get_note
+
+    data: Dict[str, Any] = {"title": title, "body_md": body_md or ""}
+    if tags is not None:
+        data["tags"] = tags
+    if aliases is not None:
+        data["aliases"] = aliases
+    if anchor_annotation_id is not None:
+        data["anchor_annotation_id"] = int(anchor_annotation_id)
+    note_id = await _to_thread(_create_note, data)
+    return {"status": "created", "note_id": note_id, "note": await _to_thread(get_note, note_id)}
+
+
+@mcp.tool()
+async def update_note(
+    note_id: int,
+    title: Optional[str] = None,
+    body_md: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    aliases: Optional[List[str]] = None,
+    anchor_annotation_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Update an existing zettelkasten note. Pass only the fields you want to
+    change. Setting ``anchor_annotation_id`` re-anchors the note (ties it to a
+    different highlighted passage).
+
+    Args:
+        note_id: The note_id returned by create_note.
+        title: New title (renames the on-disk ``.md`` file too).
+        body_md: New Markdown body.
+        tags: New free-text zettel tags (replaces the set).
+        aliases: New Obsidian aliases (replaces the set).
+        anchor_annotation_id: New annotation_id to anchor to, or None to clear.
+    """
+    from app.repositories.zettel import get_note, patch_note
+
+    if not await _to_thread(get_note, note_id):
+        return {"status": "not_found", "note_id": note_id}
+
+    data: Dict[str, Any] = {}
+    if title is not None:
+        data["title"] = title
+    if body_md is not None:
+        data["body_md"] = body_md
+    if tags is not None:
+        data["tags"] = tags
+    if aliases is not None:
+        data["aliases"] = aliases
+    if anchor_annotation_id is not None:
+        data["anchor_annotation_id"] = int(anchor_annotation_id)
+    if not data:
+        return {"status": "noop", "note_id": note_id, "note": await _to_thread(get_note, note_id)}
+
+    note = await _to_thread(patch_note, note_id, data)
+    return {"status": "updated", "note_id": note_id, "note": note}
+
+
+@mcp.tool()
+async def link_notes(
+    source_note_id: int,
+    target_note_id: int,
+    link_type: str = "extends",
+    rationale: str = "",
+) -> Dict[str, Any]:
+    """Create a typed link between two zettelkasten notes. Links are the edges
+    of the note graph. Idempotent: a duplicate (same source, target, type) is
+    ignored.
+
+    Args:
+        source_note_id: The note the link points from.
+        target_note_id: The note the link points to.
+        link_type: One of "supports", "contradicts", "extends", "refines",
+            "questions", "exemplifies". Defaults to "extends".
+        rationale: Optional short reason for the link.
+    """
+    from app.repositories.zettel import create_link, get_note
+
+    if not await _to_thread(get_note, source_note_id):
+        return {"status": "not_found", "note_id": source_note_id}
+    if not await _to_thread(get_note, target_note_id):
+        return {"status": "not_found", "note_id": target_note_id}
+
+    link_id = await _to_thread(
+        create_link,
+        {
+            "source_note_id": source_note_id,
+            "target_note_id": target_note_id,
+            "link_type": link_type,
+            "rationale": rationale,
+        },
+    )
+    if link_id is None:
+        return {"status": "ignored", "reason": "invalid type, self-link, or duplicate"}
+    return {"status": "created", "link_id": link_id}
+
+
+@mcp.tool()
+async def list_notes(
+    item_key: Optional[str] = None,
+    tag: Optional[str] = None,
+    q: Optional[str] = None,
+) -> Dict[str, Any]:
+    """List zettelkasten notes, optionally filtered by anchored item, tag, or
+    free-text query (matches title and body).
+
+    Args:
+        item_key: Optional — only notes anchored to this library item.
+        tag: Optional — only notes carrying this free-text zettel tag.
+        q: Optional — free-text search over title and body.
+    """
+    from app.repositories.zettel import list_notes as _list_notes
+
+    notes = await _to_thread(_list_notes, item_key=item_key, tag=tag, q=q)
+    return {"notes": notes}
+
+
+@mcp.tool()
+async def get_note_tool(note_id: int) -> Dict[str, Any]:
+    """Fetch full details of a single zettelkasten note (title, Markdown body,
+    anchor, tags, aliases).
+
+    Args:
+        note_id: The note_id of the note.
+    """
+    from app.repositories.zettel import get_note
+
+    note = await _to_thread(get_note, note_id)
+    if not note:
+        return {"status": "not_found", "note_id": note_id}
+    return {"note": note}
+
+
+@mcp.tool()
+async def list_note_backlinks(note_id: int) -> Dict[str, Any]:
+    """List the notes that link TO this one (incoming links / backlinks), with
+    the source note title, link type, origin, and rationale.
+
+    Args:
+        note_id: The note_id of the note.
+    """
+    from app.repositories.zettel import get_backlinks, get_note
+
+    if not await _to_thread(get_note, note_id):
+        return {"status": "not_found", "note_id": note_id}
+    backlinks = await _to_thread(get_backlinks, note_id)
+    return {"backlinks": backlinks}
+
+
+@mcp.tool()
+async def recompute_zettel_links(kinds: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Recompute the computed links between notes — shared evidence (pure SQL),
+    semantic similarity (embeddings), and LLM-detected contradiction. These are
+    the links Obsidian cannot derive. Shared-evidence runs synchronously;
+    semantic and contradiction run in the background (heavier: embeddings/LLM).
+
+    Args:
+        kinds: Optional subset of ["shared_evidence", "semantic",
+            "contradiction"]. Defaults to all three.
+    """
+    import threading
+    import uuid as _uuid
+
+    from app.routers.zettel import _run_recompute_job, _jobs, _jobs_lock
+    from app.repositories import zettel as _zettel
+
+    requested = list(kinds or ["shared_evidence", "semantic", "contradiction"])
+    valid = {"shared_evidence", "shared_theme", "semantic", "contradiction"}
+    requested = [k for k in requested if k in valid] or ["shared_evidence"]
+
+    report: Dict[str, int] = {}
+    background: List[str] = []
+    if "shared_evidence" in requested or "shared_theme" in requested:
+        report["shared_evidence"] = await _to_thread(_zettel.recompute_shared_evidence)
+    if "semantic" in requested:
+        background.append("semantic")
+    if "contradiction" in requested:
+        background.append("contradiction")
+
+    if not background:
+        return {"status": "completed", "report": report}
+
+    job_id = str(_uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "running", "report": report}
+    threading.Thread(target=_run_recompute_job, args=(job_id, background), daemon=True).start()
+    return {"status": "accepted", "job_id": job_id, "report": report}
+
+
 @mcp.tool()
 async def set_item_favorite(item_key: str, favorite: bool) -> Dict[str, Any]:
     """Mark a library item as a favourite, or clear the favourite flag.
