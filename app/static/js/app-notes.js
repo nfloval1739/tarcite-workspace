@@ -108,10 +108,17 @@ function renderZettelSidebar() {
         /* An orphan is worth flagging in the list, not just in the filter. */
         const orphan = !n.link_count ? '<span class="zettel-orphan-dot" title="No links yet"></span>' : '';
         const links = n.link_count ? `${n.link_count} link${n.link_count === 1 ? '' : 's'}` : 'unlinked';
-        return `<button class="project-list-item ${active}" onclick="selectZettelNote(${n.note_id})">
-            <span class="project-list-name">${anchor}${escapeHtml(n.title || 'Untitled')}</span>
-            <span class="project-list-meta">${orphan}${links}</span>
-        </button>`;
+        const safeTitle = escapeHtml(n.title || 'Untitled').replace(/'/g, "\\'");
+        return `<div class="zettel-row">
+            <button class="project-list-item ${active}" onclick="selectZettelNote(${n.note_id})">
+                <span class="project-list-name">${anchor}${escapeHtml(n.title || 'Untitled')}</span>
+                <span class="project-list-meta">${orphan}${links}</span>
+            </button>
+            <button class="zettel-row-delete" title="Delete this note"
+                    onclick="event.stopPropagation(); deleteZettelNoteById(${n.note_id}, '${safeTitle}')">
+                ${icon('trash-2')}
+            </button>
+        </div>`;
     }).join('');
     refreshIcons(list);
     renderZettelFilterNav();
@@ -271,7 +278,7 @@ function renderZettelEditorSection(note) {
             <div id="zettel-link-autocomplete" class="chat-mention-autocomplete hidden"></div>
             <div class="zettel-write-footer">
                 <span class="project-muted">${escapeHtml(note.source || 'manual')}</span>
-                <button class="zettel-delete-link" onclick="deleteActiveZettelNote()">${icon('trash-2')} Delete note</button>
+                <button class="btn-danger-outline" onclick="deleteActiveZettelNote()">${icon('trash-2')} Delete note</button>
             </div>
         </section>`;
 }
@@ -514,26 +521,36 @@ async function newZettelNote() {
 
 async function deleteActiveZettelNote() {
     const note = appState.activeZettelNote;
-    if (!note) return;
-    if (!confirm(`Delete “${note.title || 'Untitled note'}”? This cannot be undone.`)) return;
+    if (note) await deleteZettelNoteById(note.note_id, note.title);
+}
+
+async function deleteZettelNoteById(noteId, title) {
+    if (!noteId) return;
+    const name = title || (appState.zettelNotes || []).find(n => n.note_id === noteId)?.title || 'Untitled note';
+    if (!confirm(`Delete \u201c${name}\u201d? This cannot be undone.`)) return;
     try {
         /* Drop any queued edit for this note; the PATCH would 404 and be
          * reported to the user as a failed save. */
-        if (_zettelPendingNoteId === note.note_id) {
+        if (_zettelPendingNoteId === noteId) {
             if (_zettelSaveTimer) { clearTimeout(_zettelSaveTimer); _zettelSaveTimer = null; }
             _zettelPendingNoteId = null;
             _zettelPendingPatch = {};
         }
-        const res = await fetch(`/api/zettel/notes/${note.note_id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/zettel/notes/${noteId}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Could not delete note');
-        appState.zettelNotes = (appState.zettelNotes || []).filter(n => n.note_id !== note.note_id);
-        appState.activeZettelNoteId = appState.zettelNotes.length ? appState.zettelNotes[0].note_id : null;
-        appState.activeZettelNote = null;
-        renderZettelSidebar();
-        if (appState.activeZettelNoteId) await loadZettelDetail(appState.activeZettelNoteId);
-        else renderZettelEmpty();
+        appState.zettelNotes = (appState.zettelNotes || []).filter(n => n.note_id !== noteId);
+        if (appState.activeZettelNoteId === noteId) {
+            appState.activeZettelNoteId = appState.zettelNotes.length ? appState.zettelNotes[0].note_id : null;
+            appState.activeZettelNote = null;
+            renderZettelSidebar();
+            if (appState.activeZettelNoteId) await loadZettelDetail(appState.activeZettelNoteId);
+            else renderZettelEmpty();
+        } else {
+            renderZettelSidebar();
+        }
     } catch (err) {
         console.error('Delete note error:', err);
+        alert(err.message);
     }
 }
 

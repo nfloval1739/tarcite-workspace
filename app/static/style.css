@@ -34,7 +34,7 @@
     --warning: #fbbf24;
     --error: #f87171;
     --tree-guide-color: rgba(148, 163, 196, 0.68);
-    --sidebar-width: 320px;
+    --sidebar-width: 360px;
     --center-width: 670px;
     --preview-width: 620px;
     --topbar-height: 48px;
@@ -11477,7 +11477,7 @@ button.coverage-stat:hover span { text-decoration: underline; }
 .zettel-editor { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
 .zettel-title-row .compact-input { font-size: 15px; font-weight: 700; height: 40px; border-radius: var(--radius-sm); }
 .zettel-meta-row { display: flex; gap: 10px; flex-wrap: wrap; }
-.zettel-meta-row .compact-input { flex: 1; min-width: 180px; height: 38px; font-size: 13px; }
+.zettel-meta-row .compact-input { flex: 1; min-width: 140px; height: 38px; font-size: 13px; }
 
 .zettel-editor-body {
     display: grid;
@@ -12072,16 +12072,18 @@ input.zettel-title-input:focus {
     border-bottom-color: var(--accent);
 }
 .zettel-meta-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.zettel-meta-row .compact-input { flex: 1; min-width: 140px; }
 .zettel-preview-toggle {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
+    flex: none;
+    height: 38px;                 /* the inputs beside it render 38px, not the 42px .compact-input declares */
+    box-sizing: border-box;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius);
     background: none;
-    padding: 5px 9px;
-    font-size: 12px;
+    padding: 0 14px;
+    font-size: 13px;
     color: var(--text-muted);
     cursor: pointer;
 }
@@ -12116,18 +12118,52 @@ input.zettel-title-input:focus {
     align-items: center;
     font-size: 12px;
 }
-.zettel-delete-link {
+.btn-danger-outline {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     background: none;
-    border: 0;
-    padding: 2px 4px;
-    font-size: 12px;
-    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    height: 38px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    font-size: 14px;
+    color: var(--text-secondary);
     cursor: pointer;
+    transition: color .15s, border-color .15s, background .15s;
 }
-.zettel-delete-link:hover { color: var(--red); }
+.btn-danger-outline:hover {
+    color: var(--red);
+    border-color: var(--red);
+    background: rgba(248, 113, 113, .10);
+}
+
+/* Removing a thing from a list belongs on the row, revealed on hover. */
+.zettel-row { position: relative; }
+.zettel-row .project-list-item { width: 100%; }
+.zettel-row-delete {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--text-muted);
+    opacity: 0;
+    cursor: pointer;
+    transition: opacity .12s, color .12s, background .12s;
+}
+.zettel-row:hover .zettel-row-delete,
+.zettel-row-delete:focus-visible { opacity: 1; }
+.zettel-row-delete:hover { color: var(--red); background: rgba(248, 113, 113, .12); }
+.zettel-row-delete svg, .zettel-row-delete .lucide { width: 14px; height: 14px; }
 
 /* Connections — always under the note, never behind a tab. */
 .zettel-connections {
@@ -12208,19 +12244,22 @@ input.zettel-title-input:focus {
 /* Write / Graph are modes, not tabs on a note. */
 .zettel-mode-switch {
     display: inline-flex;
+    align-items: stretch;
+    height: 42px;                 /* .btn-small is 42px; anything else reads as a mistake */
     border: 1px solid var(--border);
-    border-radius: 7px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     margin-right: 8px;
+    box-sizing: border-box;
 }
 .zettel-mode-btn {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
     border: 0;
     background: none;
-    padding: 5px 11px;
-    font-size: 12px;
+    padding: 0 14px;
+    font-size: 14px;
     color: var(--text-muted);
     cursor: pointer;
 }
