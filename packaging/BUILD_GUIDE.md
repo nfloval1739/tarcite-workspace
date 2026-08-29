@@ -18,7 +18,7 @@ All commands are run from the **project root** (the folder containing `citation.
    - Download [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
    - Select workload: **"Desktop development with C++"**
 
-3. **Inno Setup 6+** — creates the `.exe` installer:
+3. **Inno Setup 6.3+** — creates the `.exe` installer:
    - Download from [jrsoftware.org/isinfo.php](https://jrsoftware.org/isinfo.php)
    - Install with default options (adds `iscc` to PATH)
 

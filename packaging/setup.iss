@@ -1,5 +1,6 @@
 ; Inno Setup script for TarCite Workspace (Windows)
-; Requires Inno Setup 6+: https://jrsoftware.org/isinfo.php
+; Requires Inno Setup 6.3+ (for ArchitecturesInstallIn64BitMode=x64compatible):
+;   https://jrsoftware.org/isinfo.php
 ; Run from the project root after PyInstaller:
 ;   iscc packaging\setup.iss
 ;
@@ -48,8 +49,13 @@ UninstallDisplayName={#MyAppName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
+PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
-ArchitecturesInstallIn64BitMode=x64
+; The PyInstaller bundle is x64-only. x64compatible covers x64 and ARM64
+; (which runs x64 under emulation); ArchitecturesAllowed stops setup on
+; 32-bit x86 Windows with a clear message instead of a broken install.
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 ShowLanguageDialog=no
 
 ; Signing — uncomment the #define SIGNTOOL line at the top of this file
@@ -72,20 +78,11 @@ Source: "{#SrcDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cre
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startupicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
-
-[Registry]
-; Ensure the app appears cleanly in Windows Apps & Features
-Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppID}"; ValueType: string; ValueName: "DisplayName"; ValueData: "{#MyAppName}"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppID}"; ValueType: string; ValueName: "Publisher"; ValueData: "{#MyAppPublisher}"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppID}"; ValueType: string; ValueName: "DisplayVersion"; ValueData: "{#MyAppDisplayVersion}"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppID}"; ValueType: string; ValueName: "URLInfoAbout"; ValueData: "{#MyAppURL}"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppID}"; ValueType: dword; ValueName: "NoModify"; ValueData: "1"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppID}"; ValueType: dword; ValueName: "NoRepair"; ValueData: "1"; Flags: uninsdeletekey
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallDelete]
 ; Only remove files we installed; leave user data (DB, ChromaDB, settings) intact

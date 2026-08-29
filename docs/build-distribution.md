@@ -33,7 +33,7 @@ A **minimal** variant (~200 MB) ships without the bundled models; they download 
 
 - **Python 3.12** — from [python.org](https://python.org) (tick "Add Python to PATH")
 - **Visual C++ Build Tools** — [visualstudio.microsoft.com](https://visualstudio.microsoft.com/visual-cpp-build-tools/), workload "Desktop development with C++"
-- **Inno Setup 6+** — from [jrsoftware.org/isinfo.php](https://jrsoftware.org/isinfo.php), must be on PATH as `iscc`
+- **Inno Setup 6.3+** — from [jrsoftware.org/isinfo.php](https://jrsoftware.org/isinfo.php), must be on PATH as `iscc`
 - **A Python virtual environment** at `venv\` in the project root
 
 ---

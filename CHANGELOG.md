@@ -69,6 +69,31 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   themes"), including the theme network, which caps at the 60 most-used themes.
 
 ### Fixed
+- **The Windows installer aborted with "IPersistFile::Save failed; code
+  0x80070005. Access is denied."** whenever it was run without administrator
+  rights — either from a standard account or by choosing "install for me only"
+  in the privileges dialogue. The desktop shortcut was pinned to
+  `{commondesktop}` (`C:\Users\Public\Desktop`), which only an administrator
+  may write to, so setup failed at the "Creating shortcuts" step. It now uses
+  `{autodesktop}`, which follows whichever install mode the user picked. Two
+  further admin-only steps behind that one are also gone: a hand-written
+  `HKLM` uninstall key, which needed the same rights and duplicated the key
+  Inno Setup already writes (leaving a second, un-uninstallable entry in Apps &
+  Features), and the post-install launch, which now runs as the logged-in user
+  via `runasoriginaluser` rather than inheriting the elevated token — so an
+  install elevated with a different administrator account no longer creates the
+  library and settings under that administrator's profile.
+- **The Windows installer put the app in `Program Files (x86)` on ARM64
+  machines, and installed a broken copy on 32-bit x86.**
+  `ArchitecturesInstallIn64BitMode=x64` matched x64 only, so an ARM64 Windows
+  PC — which runs the x64 build fine under emulation — fell back to 32-bit
+  mode and the wrong Program Files directory. It is now `x64compatible`, which
+  covers x64 and ARM64. A matching `ArchitecturesAllowed=x64compatible` stops
+  setup on genuine 32-bit x86 Windows with a clear "not compatible with this
+  version of Windows" message, rather than installing an x64 bundle that
+  cannot start. Existing installs keep their current directory on upgrade.
+  Building now requires **Inno Setup 6.3+** (was 6+) for the `x64compatible`
+  constant.
 - **Eleven CSS custom properties were referenced but never defined**, with no
   fallback: `--border` (32 uses), `--bg-hover` (12), `--accent-rgb` (12),
   `--text` (10), `--red` (9) and six others. Every declaration reading one was
