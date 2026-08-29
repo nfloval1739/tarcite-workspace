@@ -11959,3 +11959,15 @@ button.coverage-stat:hover span { text-decoration: underline; }
 @media (max-width: 900px) {
     .zettel-editor-body { grid-template-columns: 1fr; }
 }
+
+/* Zettelkasten save status — quiet by default, loud only on failure. */
+.zettel-save-status {
+    font-size: 11px;
+    margin-top: 2px;
+    min-height: 14px;
+    color: var(--text-muted, #6b7280);
+    transition: color .15s ease;
+}
+.zettel-save-status.dirty  { color: var(--text-muted, #6b7280); }
+.zettel-save-status.saved  { color: var(--green, #16a34a); }
+.zettel-save-status.failed { color: var(--red, #dc2626); font-weight: 600; }

@@ -13,6 +13,11 @@
 /* Global autocomplete check token, mirroring _mentionCheckId in app-annotations.js. */
 let _zettelLinkCheckId = 0;
 let _zettelSaveTimer = null;
+/* A debounced save must remember the note it was typed into: the user can
+ * switch notes inside the debounce window, and appState.activeZettelNoteId
+ * will already point at the new one by the time the timer fires. */
+let _zettelPendingNoteId = null;
+let _zettelPendingPatch = {};
 let _zettelRecomputeJob = null;
 
 const ZETTEL_LINK_TYPES = [
@@ -78,6 +83,7 @@ function renderZettelSidebar() {
 }
 
 async function selectZettelNote(noteId) {
+    await flushZettelSave();
     appState.activeZettelNoteId = noteId;
     appState.activeZettelSection = 'editor';
     renderZettelSidebar();
@@ -170,7 +176,11 @@ function renderZettelSectionNav() {
     refreshIcons(nav);
 }
 
-function selectZettelSection(sectionId) {
+async function selectZettelSection(sectionId) {
+    /* Switching section rebuilds the panel with innerHTML, destroying the
+     * textarea -- so anything typed but not yet saved has to land first, and
+     * the re-render has to use the note the server just returned. */
+    await flushZettelSave();
     appState.activeZettelSection = sectionId || 'editor';
     if (appState.activeZettelNote) renderZettelDetail(appState.activeZettelNote);
 }
@@ -261,9 +271,57 @@ function renderZettelMarkdown(text) {
 }
 
 function scheduleZettelSave(patch) {
-    if (!appState.activeZettelNoteId) return;
+    const noteId = appState.activeZettelNoteId;
+    if (!noteId) return;
+    /* Anything still pending for another note lands now, before we start
+     * batching edits for this one -- otherwise it would be sent to whichever
+     * note happens to be open when the timer fires. */
+    if (_zettelPendingNoteId && _zettelPendingNoteId !== noteId) flushZettelSave();
+    _zettelPendingNoteId = noteId;
+    /* Merge rather than replace: editing the body and then the tags inside one
+     * debounce window must save both, not just the later field. */
+    Object.assign(_zettelPendingPatch, patch);
+    markZettelDirty();
     if (_zettelSaveTimer) clearTimeout(_zettelSaveTimer);
-    _zettelSaveTimer = setTimeout(() => patchZettelNote(appState.activeZettelNoteId, patch), 500);
+    _zettelSaveTimer = setTimeout(flushZettelSave, 500);
+}
+
+/* ── Save status ──────────────────────────────────────────────────────────── */
+
+function _setZettelSaveStatus(text, cls) {
+    const el = document.getElementById('zettel-save-status');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'zettel-save-status' + (cls ? ' ' + cls : '');
+}
+
+function markZettelDirty()     { _setZettelSaveStatus('Unsaved changes…', 'dirty'); }
+function markZettelSaved()     { _setZettelSaveStatus('Saved', 'saved'); }
+function markZettelSaveFailed() { _setZettelSaveStatus('Could not save — your last edit is still in the editor', 'failed'); }
+
+/* A pending edit must survive the window closing. fetch(keepalive) is allowed
+ * to outlive the page; a normal fetch here would simply be cancelled. */
+window.addEventListener('beforeunload', () => {
+    if (!_zettelPendingNoteId || !Object.keys(_zettelPendingPatch).length) return;
+    try {
+        fetch(`/api/zettel/notes/${_zettelPendingNoteId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(_zettelPendingPatch),
+            keepalive: true,
+        });
+    } catch (_) { /* nothing useful to do while unloading */ }
+});
+
+/* Send any pending edit immediately. Safe to call when nothing is pending. */
+function flushZettelSave() {
+    if (_zettelSaveTimer) { clearTimeout(_zettelSaveTimer); _zettelSaveTimer = null; }
+    const noteId = _zettelPendingNoteId;
+    const patch = _zettelPendingPatch;
+    _zettelPendingNoteId = null;
+    _zettelPendingPatch = {};
+    if (!noteId || !Object.keys(patch).length) return Promise.resolve();
+    return patchZettelNote(noteId, patch);
 }
 
 async function patchZettelNote(noteId, patch) {
@@ -275,7 +333,10 @@ async function patchZettelNote(noteId, patch) {
         });
         if (!res.ok) throw new Error('Save failed');
         const data = await res.json();
-        appState.activeZettelNote = data.note;
+        /* A flush for a note the user has already navigated away from still
+         * updates the list, but must not touch the view showing another note. */
+        const isActive = noteId === appState.activeZettelNoteId;
+        if (isActive) appState.activeZettelNote = data.note;
         /* Keep the sidebar title in sync without re-rendering the textarea
          * (which would steal focus / reset the caret). */
         const item = (appState.zettelNotes || []).find(n => n.note_id === noteId);
@@ -283,10 +344,14 @@ async function patchZettelNote(noteId, patch) {
             Object.assign(item, data.note);
             renderZettelSidebar();
         }
-        const titleEl = document.getElementById('zettel-view-title');
-        if (titleEl) titleEl.textContent = data.note.title || 'Untitled note';
+        if (isActive) {
+            const titleEl = document.getElementById('zettel-view-title');
+            if (titleEl) titleEl.textContent = data.note.title || 'Untitled note';
+        }
+        markZettelSaved();
     } catch (err) {
         console.error('Patch note error:', err);
+        markZettelSaveFailed();
     }
 }
 
@@ -395,6 +460,13 @@ async function deleteActiveZettelNote() {
     if (!note) return;
     if (!confirm(`Delete “${note.title || 'Untitled note'}”? This cannot be undone.`)) return;
     try {
+        /* Drop any queued edit for this note; the PATCH would 404 and be
+         * reported to the user as a failed save. */
+        if (_zettelPendingNoteId === note.note_id) {
+            if (_zettelSaveTimer) { clearTimeout(_zettelSaveTimer); _zettelSaveTimer = null; }
+            _zettelPendingNoteId = null;
+            _zettelPendingPatch = {};
+        }
         const res = await fetch(`/api/zettel/notes/${note.note_id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Could not delete note');
         appState.zettelNotes = (appState.zettelNotes || []).filter(n => n.note_id !== note.note_id);
