@@ -1345,69 +1345,124 @@ async function exportZettelMdZip() {
  * / _ellipsize / _EXP helpers from app-projects.js, and zettelEdgeStyle so the
  * exported edges match the on-screen visual language. */
 function _buildZettelGraphSvg() {
-    const data = appState.zettelGraphData;
-    const nodes = data?.nodes || [];
-    const edges = data?.edges || [];
-    if (!nodes.length) return null;
+    /* This used to lay the graph out again from scratch -- nodes spaced evenly
+     * around a circle of radius 180, in list order -- so the exported picture
+     * shared nothing with the force-directed layout on screen but the node
+     * names. Read the live positions instead. */
+    const st = (typeof _netState !== 'undefined' && _netState) ? _netState : null;
+    if (!st || !st.nodes || !st.nodes.length) return null;
+    const nodes = st.nodes, idxMap = st.idxMap || {}, edges = st.edgeList || [];
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
 
-    const cx = 220, cy = 220, R = nodes.length > 1 ? 180 : 0;
-    const placed = nodes.map((n, i) => {
-        const ang = nodes.length > 1 ? (i / nodes.length) * 2 * Math.PI - Math.PI / 2 : 0;
-        const r = Math.max(10, Math.min(26, 10 + (n.count || 1) * 3));
-        return { ...n, x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang), r };
+    const LBL = 10, LINE = LBL * 1.18, MAXW = 108;
+    const wrap = (text) => {
+        const words = String(text || 'Untitled').split(/\s+/).filter(Boolean);
+        const lines = [];
+        let cur = '', i = 0;
+        while (i < words.length && lines.length < 2) {
+            const test = cur ? cur + ' ' + words[i] : words[i];
+            if (!cur || _tw(test, LBL, 500) <= MAXW) { cur = test; i++; }
+            else { lines.push(cur); cur = ''; }
+        }
+        if (cur && lines.length < 2) { lines.push(cur); cur = ''; }
+        if ((i < words.length || cur) && lines.length) {
+            lines[lines.length - 1] = lines[lines.length - 1] + '\u2026';
+        }
+        return lines;
+    };
+
+    const plan = nodes.map(n => {
+        const lines = wrap(n.name);
+        const w = Math.max(0, ...lines.map(l => _tw(l, LBL, 500)));
+        return { n, lines, w };
     });
-    const idx = new Map(placed.map(n => [n.id, n]));
 
-    const LBL = 12;
-    const labels = placed.map(n => _ellipsize(n.name || `#${n.id}`, LBL, 170, 700));
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    placed.forEach((n, i) => {
-        const half = Math.max(n.r, _tw(labels[i], LBL, 700) / 2);
-        x0 = Math.min(x0, n.x - half); x1 = Math.max(x1, n.x + half);
-        y0 = Math.min(y0, n.y - n.r - 2); y1 = Math.max(y1, n.y + n.r + 6 + LBL);
+    plan.forEach(({ n, lines, w }) => {
+        const half = Math.max(n.r || 6, w / 2);
+        x0 = Math.min(x0, n.x - half);           x1 = Math.max(x1, n.x + half);
+        y0 = Math.min(y0, n.y - (n.r || 6) - 2);
+        y1 = Math.max(y1, n.y + (n.r || 6) + 4 + lines.length * LINE);
     });
-    const M = 16;
+    const M = 20;
     const ox = -x0 + M, oy = -y0 + M;
     const bodyW = (x1 - x0) + M * 2, bodyH = (y1 - y0) + M * 2;
 
-    const dashAttr = d => Array.isArray(d) ? ` stroke-dasharray="${d.join(' ')}"` : '';
+    const dashAttr = d => Array.isArray(d) && d.length ? ` stroke-dasharray="${d.join(' ')}"` : '';
     const edgeEls = edges.map(e => {
-        const a = idx.get(e.source), b = idx.get(e.target);
+        const a = nodes[idxMap[e.s]], b = nodes[idxMap[e.t]];
         if (!a || !b) return '';
-        const st = zettelEdgeStyle(e.origin, e.link_type);
-        const lw = Math.max(1, (e.weight || 1) * 2).toFixed(2);
-        const ax = (a.x + ox).toFixed(1), ay = (a.y + oy).toFixed(1);
-        const bx = (b.x + ox).toFixed(1), by = (b.y + oy).toFixed(1);
-        return `<path d="M ${ax} ${ay} L ${bx} ${by}" fill="none" stroke="${st.color}" stroke-width="${lw}" stroke-linecap="round" opacity="0.75"${dashAttr(st.dash)}/>`;
+        const col = e.color || (isDark ? '#64748b' : '#94a3b8');
+        return `<line x1="${(a.x + ox).toFixed(1)}" y1="${(a.y + oy).toFixed(1)}" `
+             + `x2="${(b.x + ox).toFixed(1)}" y2="${(b.y + oy).toFixed(1)}" `
+             + `stroke="${col}" stroke-width="1.1" stroke-opacity="0.65"${dashAttr(e.dash)} />`;
     }).join('');
 
-    const nodeEls = placed.map((n, i) => {
-        const x = (n.x + ox).toFixed(1), y = (n.y + oy).toFixed(1);
-        const fill = n.anchored ? '#3b82f6' : '#9ca3af';
-        return `<g>
-            <circle cx="${x}" cy="${y}" r="${n.r.toFixed(1)}" fill="${fill}" fill-opacity="0.85" stroke="${fill}" stroke-width="2"/>
-            ${n.count > 0 ? `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" font-size="${Math.max(9, n.r * 0.6).toFixed(1)}" font-weight="700" fill="#fff">${n.count}</text>` : ''}
-            <text x="${x}" y="${(n.y + oy + n.r + 6).toFixed(1)}" text-anchor="middle" dominant-baseline="hanging" font-size="${LBL}" font-weight="700" fill="${_EXP.ink}" stroke="${_EXP.bg}" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke">${_sx(labels[i])}</text>
-        </g>`;
+    const nodeEls = plan.map(({ n, lines }) => {
+        const cx = (n.x + ox).toFixed(1), cy = (n.y + oy).toFixed(1);
+        const r = (n.r || 6).toFixed(1);
+        const fill = (st.clustersEnabled && n.community_color) ? n.community_color : (n.color || '#60a5fa');
+        const text = lines.map((ln, i) =>
+            `<text x="${cx}" y="${(n.y + oy + (n.r || 6) + 4 + (i + 1) * LINE - LINE * 0.25).toFixed(1)}" `
+            + `text-anchor="middle" font-family="${_EXP.font}" font-size="${LBL}" font-weight="500" `
+            + `fill="${isDark ? '#cbd5e1' : '#334155'}">${escapeHtml(ln)}</text>`).join('');
+        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" `
+             + `stroke="${isDark ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.9)'}" stroke-width="0.7" />${text}`;
     }).join('');
 
     return _expFrame({
-        title: 'Zettelkasten Note Graph',
-        subtitle: `${nodes.length} notes · ${edges.length} links`,
-        bodyW, bodyH, body: edgeEls + nodeEls,
+        title: 'Knowledge graph',
+        subtitle: `${nodes.length} note${nodes.length === 1 ? '' : 's'} \u00b7 ${edges.length} link${edges.length === 1 ? '' : 's'}`,
+        bodyW, bodyH,
+        body: edgeEls + nodeEls,
     });
 }
 
 function exportZettelGraphSvg() {
     const svg = _buildZettelGraphSvg();
-    if (!svg) { alert('No notes to export. Create a note first.'); return; }
+    if (!svg) { alert('Open the Graph view first, then export the SVG.'); return; }
     downloadTextFile(svg, `zettel_graph_${_exportDateStamp()}.svg`, 'image/svg+xml;charset=utf-8');
 }
 
 function exportZettelGraphPng() {
-    const svg = _buildZettelGraphSvg();
-    if (!svg) { alert('No notes to export. Create a note first.'); return; }
-    _svgAsPng(svg, `zettel_graph_${_exportDateStamp()}.png`);
+    /* The graph is drawn on a canvas, so exporting that canvas is the only way
+     * the file matches the screen -- gradients, cluster halos, wrapped labels
+     * and all. It is backed at devicePixelRatio, so this is already a
+     * high-resolution capture rather than a redrawing that drifts from it. */
+    const canvas = document.getElementById('zettel-network-canvas');
+    if (!canvas || !canvas.width || !canvas.height) {
+        alert('Open the Graph view first, then export the PNG.');
+        return;
+    }
+    /* Hovering a node dims every other one, and a typed filter dims everything
+     * that does not match. Neither belongs in an exported file: what you get
+     * should not depend on where the pointer happened to be resting. Clear
+     * both, redraw, capture, then put the view back as it was. */
+    let _restoreView = null;
+    if (typeof _netState !== 'undefined' && _netState) {
+        const prevHover = _netState.hoveredNode;
+        const prevQuery = _netState.searchQuery;
+        _netState.hoveredNode = null;
+        _netState.searchQuery = '';
+        if (typeof _netDraw === 'function') _netDraw();
+        _restoreView = () => {
+            _netState.hoveredNode = prevHover;
+            _netState.searchQuery = prevQuery;
+            if (typeof _netWakeAnimation === 'function') _netWakeAnimation();
+        };
+    }
+    canvas.toBlob(blob => {
+        if (_restoreView) _restoreView();
+        if (!blob) { alert('Could not export the graph as PNG.'); return; }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `zettel_graph_${_exportDateStamp()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, 'image/png');
 }
 
 /* ── Helpers ───────────────────────────────────────────────────────────────── */

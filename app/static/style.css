@@ -12484,3 +12484,31 @@ input.graph-hud-search:focus { outline: none; }
     .zettel-mode-btn .btn-label { display: none; }
     .zettel-mode-btn { padding: 0 12px; }
 }
+
+/* The notes tooltip carries a real action, so it has to accept the pointer.
+   Other graphs keep the inert tooltip they had. */
+#zettel-graph-tooltip { pointer-events: auto; }
+
+.graph-tip-open {
+    display: block;
+    width: 100%;
+    margin-top: 10px;
+    padding: 7px 10px;
+    border: 1px solid rgba(255, 255, 255, .22);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, .10);
+    color: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+}
+.graph-tip-open:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+[data-theme="light"] .graph-tip-open {
+    border-color: rgba(0, 0, 0, .16);
+    background: rgba(0, 0, 0, .05);
+}

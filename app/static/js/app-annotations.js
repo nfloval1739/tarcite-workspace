@@ -4359,13 +4359,44 @@ function _netAttachEvents(canvas) {
     };
 }
 
+let _netTipHideTimer = null;
+
+/* Opens the note the tooltip is describing. The tooltip shows the quote, the
+   source and the link count, so people reach for it -- it needs to be usable
+   rather than evaporate on the way. */
+function _netTipOpen() {
+    const tip = _netState && _netState.tooltipEl;
+    if (!tip) return;
+    const raw = tip.dataset.nodeId;
+    if (!raw) return;
+    tip.style.display = 'none';
+    const id = /^\d+$/.test(raw) ? Number(raw) : raw;
+    const click = (_netState && _netState.onNodeClick) || drillIntoTheme;
+    if (click) click({ id });
+}
+
 function _netUpdateTooltip(node, e) {
     const tip = _netState?.tooltipEl;
     if (!tip) return;
+
+    /* Bind once: entering the tooltip cancels the pending hide, leaving it
+       closes it. Without this the pointer could never arrive -- the tooltip
+       vanished the moment it left the node. */
+    if (!tip._netTipBound) {
+        tip._netTipBound = true;
+        tip.addEventListener('mouseenter', () => clearTimeout(_netTipHideTimer));
+        tip.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+    }
+
     if (!node || !e) {
-        tip.style.display = 'none';
+        /* A short grace period is what makes the gap between node and tooltip
+           crossable. */
+        clearTimeout(_netTipHideTimer);
+        _netTipHideTimer = setTimeout(() => { tip.style.display = 'none'; }, 260);
         return;
     }
+    clearTimeout(_netTipHideTimer);
+
     const canvasRect = _netState.canvas.getBoundingClientRect();
     const x = e.clientX - canvasRect.left + 16;
     const y = e.clientY - canvasRect.top + 16;
@@ -4374,17 +4405,21 @@ function _netUpdateTooltip(node, e) {
     const commHtml = node.community_name ? `<span class="graph-tip-badge community" style="background:${_netHexToRgba(node.community_color || '#60a5fa', 0.18)}; color:${node.community_color || '#60a5fa'}; border: 1px solid ${_netHexToRgba(node.community_color || '#60a5fa', 0.35)};">${escapeHtml(node.community_name)}</span>` : '';
     const yearHtml = node.year ? `<span class="graph-tip-badge year">${node.year}</span>` : '';
     const hubHtml = node.count >= 3 ? `<span class="graph-tip-badge hub">Hub (${node.count})</span>` : '';
+    const isZettelTip = tip.id === 'zettel-graph-tooltip';
 
+    tip.dataset.nodeId = node.id;
     tip.innerHTML = `
         <div class="graph-tip-header">
             <span class="graph-tip-title">${escapeHtml(node.name || 'Untitled')}</span>
             ${node.anchored ? '<span class="graph-tip-badge anchored">Anchored</span>' : '<span class="graph-tip-badge">Note</span>'}
         </div>
         <div class="graph-tip-badges">${commHtml}${yearHtml}${hubHtml}</div>
-        <div class="graph-tip-meta">${neighbourCount} direct link${neighbourCount !== 1 ? 's' : ''}${node.betweenness ? ` · Centrality ${(node.betweenness * 100).toFixed(1)}%` : ''}</div>
-        ${node.anchor_quote ? `<div class="graph-tip-quote">“${escapeHtml(node.anchor_quote.slice(0, 110))}…”</div>` : ''}
-        ${node.anchor_item_title ? `<div class="graph-tip-source">📄 ${escapeHtml(node.anchor_item_title.slice(0, 50))}</div>` : ''}
-        <div class="graph-tip-action">Click node to inspect & edit note</div>
+        <div class="graph-tip-meta">${neighbourCount} direct link${neighbourCount !== 1 ? 's' : ''}${node.betweenness ? ` \u00b7 Centrality ${(node.betweenness * 100).toFixed(1)}%` : ''}</div>
+        ${node.anchor_quote ? `<div class="graph-tip-quote">\u201c${escapeHtml(node.anchor_quote.slice(0, 110))}\u2026\u201d</div>` : ''}
+        ${node.anchor_item_title ? `<div class="graph-tip-source">\ud83d\udcc4 ${escapeHtml(node.anchor_item_title.slice(0, 50))}</div>` : ''}
+        ${isZettelTip
+            ? '<button type="button" class="graph-tip-open" onclick="_netTipOpen()">Open this note</button>'
+            : '<div class="graph-tip-action">Click the circle to open this note</div>'}
     `;
     tip.style.left = `${Math.min(x, canvasRect.width - 260)}px`;
     tip.style.top = `${Math.min(y, canvasRect.height - 150)}px`;
