@@ -3865,6 +3865,35 @@ function _netDraw() {
     const _lblHits = r => _lblRects.some(o =>
         !(r.x2 < o.x1 || r.x1 > o.x2 || r.y2 < o.y1 || r.y1 > o.y2));
 
+    /* Wrap onto at most two lines rather than cutting a title off mid-word:
+       "Institutional Invisibility of..." says far less than the two lines it
+       fits in. Only what still will not fit after two lines gets an ellipsis. */
+    const _lblWrap = (text, maxW, maxLines) => {
+        const words = String(text).split(/\s+/).filter(Boolean);
+        const lines = [];
+        let cur = '';
+        let idx = 0;
+        while (idx < words.length && lines.length < maxLines) {
+            const test = cur ? cur + ' ' + words[idx] : words[idx];
+            if (!cur || ctx.measureText(test).width <= maxW) { cur = test; idx++; }
+            else { lines.push(cur); cur = ''; }
+        }
+        if (cur && lines.length < maxLines) { lines.push(cur); cur = ''; }
+        const clipped = idx < words.length || cur !== '';
+        if (clipped && lines.length) {
+            let last = lines[lines.length - 1];
+            while (last.length > 1 && ctx.measureText(last + '\u2026').width > maxW) last = last.slice(0, -1);
+            lines[lines.length - 1] = last + '\u2026';
+        }
+        /* A single word longer than the box still has to be cut somewhere. */
+        return lines.map(l => {
+            if (ctx.measureText(l).width <= maxW) return l;
+            let t = l;
+            while (t.length > 1 && ctx.measureText(t + '\u2026').width > maxW) t = t.slice(0, -1);
+            return t + '\u2026';
+        });
+    };
+
     /* Node names are planned before edges are drawn, so a relation label can
        yield to a note's name rather than the other way round. */
     const _nodeLabelPlan = new Map();
@@ -3879,16 +3908,19 @@ function _netDraw() {
             const isHov = hoveredNode && hoveredNode.id === n.id;
             const px = isHov ? HOVER_LABEL_PX : NODE_LABEL_PX;
             ctx.font = _lblFont(px);
-            const raw = n.name || 'Untitled';
-            const cap = isHov ? 44 : 22;
-            const text = raw.length > cap ? raw.slice(0, cap - 1) + '\u2026' : raw;
-            const w = ctx.measureText(text).width;
-            const h = px * _lblInv * 1.3;
+            /* The wrap width is a screen measurement, so the box stays the same
+               shape at every zoom, like the type inside it. */
+            const maxW = (isHov ? 150 : 108) * _lblInv;
+            const lines = _lblWrap(n.name || 'Untitled', maxW, 2);
+            if (!lines.length) return;
+            const lineH = px * _lblInv * 1.18;
+            const w = Math.max(...lines.map(l => ctx.measureText(l).width));
+            const h = lines.length * lineH;
             const top = n.y + (n.r || 4) + 3 * _lblInv;
             const rect = { x1: n.x - w / 2, x2: n.x + w / 2, y1: top, y2: top + h };
             if (_lblHits(rect)) return;
             _lblRects.push(rect);
-            _nodeLabelPlan.set(n.id, { text, px, top });
+            _nodeLabelPlan.set(n.id, { lines, px, top, lineH });
         });
     }
 
@@ -4180,7 +4212,7 @@ function _netDraw() {
                 : (isHovered ? '#0f172a' : 'rgba(51, 65, 85, 0.85)');
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            ctx.fillText(_plan.text, n.x, _plan.top);
+            _plan.lines.forEach((ln, li) => ctx.fillText(ln, n.x, _plan.top + li * _plan.lineH));
             ctx.shadowBlur = 0;
         }
 
