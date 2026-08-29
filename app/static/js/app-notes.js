@@ -802,41 +802,45 @@ function renderZettelGraphSection(note) {
                 </div>
             </div>
             <div class="zettel-graph-wrap">
-                <!-- Modern Floating Glass HUD Toolbar -->
+                <!-- Controls are grouped by what they do, and placed where that
+                     kind of control is expected: what you are looking at sits
+                     top-left, what is drawn over it top-right, and the view
+                     mechanics bottom-right, the way every map and canvas tool
+                     puts zoom. One strip of twelve read as a wall of buttons. -->
                 <div class="graph-hud-controls">
-                    <!-- Scope Switcher: Global vs Local -->
                     <div class="graph-hud-scope-wrap">
-                        <button class="graph-scope-btn ${scope === 'global' ? 'active' : ''}" onclick="setZettelGraphScope('global')" title="View complete vault graph">Global</button>
-                        <button class="graph-scope-btn ${scope === 'local' ? 'active' : ''}" onclick="setZettelGraphScope('local')" title="View local neighbourhood around focused note">Local ${scope === 'local' ? `(${depth}h)` : ''}</button>
+                        <button class="graph-scope-btn ${scope === 'global' ? 'active' : ''}" onclick="setZettelGraphScope('global')" title="Every note in the library">Global</button>
+                        <button class="graph-scope-btn ${scope === 'local' ? 'active' : ''}" onclick="setZettelGraphScope('local')" title="Only the neighbourhood around the focused note">Local</button>
                     </div>
 
                     ${scope === 'local' ? `
                     <div class="graph-hud-scope-wrap">
-                        <button class="graph-scope-btn ${depth === 1 ? 'active' : ''}" onclick="setZettelGraphDepth(1)" title="1-hop immediate neighbours">1h</button>
-                        <button class="graph-scope-btn ${depth === 2 ? 'active' : ''}" onclick="setZettelGraphDepth(2)" title="2-hop extended neighbours">2h</button>
-                        <button class="graph-scope-btn ${depth === 3 ? 'active' : ''}" onclick="setZettelGraphDepth(3)" title="3-hop thematic horizon">3h</button>
+                        <button class="graph-scope-btn ${depth === 1 ? 'active' : ''}" onclick="setZettelGraphDepth(1)" title="Immediate neighbours">1</button>
+                        <button class="graph-scope-btn ${depth === 2 ? 'active' : ''}" onclick="setZettelGraphDepth(2)" title="Two hops out">2</button>
+                        <button class="graph-scope-btn ${depth === 3 ? 'active' : ''}" onclick="setZettelGraphDepth(3)" title="Three hops out">3</button>
                     </div>` : ''}
 
-                    <!-- Search Filter -->
                     <div class="graph-hud-search-wrap">
                         <i data-lucide="search" aria-hidden="true"></i>
-                        <input type="text" class="graph-hud-search" placeholder="Filter graph..." oninput="_netSearch(this.value)">
+                        <input type="text" class="graph-hud-search" placeholder="Filter notes" oninput="_netSearch(this.value)">
                     </div>
+                </div>
 
-                    <!-- Visual Analytics Toggles -->
+                <div class="graph-hud-overlays">
                     <div class="graph-hud-btn-group">
-                        <button class="graph-hud-btn ${isClusters ? 'active' : ''}" id="graph-clusters-btn" onclick="toggleZettelClusters(this)" title="Toggle thematic AI cluster grouping">${icon('layers')} Clusters</button>
-                        <button class="graph-hud-btn ${isTimeline ? 'active' : ''}" id="graph-timeline-btn" onclick="toggleZettelTimeline(this)" title="Toggle historical timeline filter">${icon('clock')} Timeline</button>
-                        <button class="graph-hud-btn" id="graph-analytics-btn" onclick="toggleZettelAnalyticsDrawer()" title="View topological metrics & knowledge hubs">${icon('bar-chart-2')} Metrics</button>
+                        <button class="graph-hud-btn ${isClusters ? 'active' : ''}" id="graph-clusters-btn" onclick="toggleZettelClusters(this)" title="Group notes into thematic clusters">${icon('layers')} Clusters</button>
+                        <button class="graph-hud-btn ${isTimeline ? 'active' : ''}" id="graph-timeline-btn" onclick="toggleZettelTimeline(this)" title="Filter the graph by when notes were written">${icon('clock')} Timeline</button>
+                        <button class="graph-hud-btn" id="graph-analytics-btn" onclick="toggleZettelAnalyticsDrawer()" title="Hubs, orphans and other graph metrics">${icon('bar-chart-2')} Metrics</button>
                     </div>
+                </div>
 
-                    <!-- View & Layout Actions -->
+                <div class="graph-hud-view">
                     <div class="graph-hud-btn-group">
-                        <button class="graph-hud-btn" onclick="_netReheat()" title="Re-organise physics layout">${icon('refresh-cw')} Organise</button>
-                        <button class="graph-hud-btn active" id="graph-hud-particles-btn" onclick="_netToggleParticles(this)" title="Toggle energy flow particles">${icon('sparkles')} Flow</button>
-                        <button class="graph-hud-btn" onclick="_netZoomFit()" title="Reset view and center">${icon('maximize-2')} Fit</button>
-                        <button class="graph-hud-btn" onclick="_netZoom(0.25)" title="Zoom in">${icon('zoom-in')}</button>
-                        <button class="graph-hud-btn" onclick="_netZoom(-0.25)" title="Zoom out">${icon('zoom-out')}</button>
+                        <button class="graph-hud-btn icon-only" onclick="_netZoom(0.25)" title="Zoom in">${icon('zoom-in')}</button>
+                        <button class="graph-hud-btn icon-only" onclick="_netZoom(-0.25)" title="Zoom out">${icon('zoom-out')}</button>
+                        <button class="graph-hud-btn icon-only" onclick="_netZoomFit()" title="Fit the whole graph in view">${icon('maximize-2')}</button>
+                        <button class="graph-hud-btn icon-only" onclick="_netReheat()" title="Re-run the layout">${icon('refresh-cw')}</button>
+                        <button class="graph-hud-btn icon-only active" id="graph-hud-particles-btn" onclick="_netToggleParticles(this)" title="Animate flow along links">${icon('sparkles')}</button>
                     </div>
                 </div>
 
@@ -941,6 +945,10 @@ function renderZettelGraph(data) {
             prebuilt: prebuilt,
             onNodeClick: (node) => selectZettelNoteById(node.id),
         });
+        /* The graph opened as a small knot in the middle of a large canvas.
+         * Frame it once the physics has settled -- the same framing the Fit
+         * button gives, so opening the graph and pressing Fit agree. */
+        setTimeout(() => { try { if (typeof _netZoomFit === 'function') _netZoomFit(); } catch (_) {} }, 1100);
     }
 }
 

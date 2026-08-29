@@ -12245,3 +12245,74 @@ input.zettel-title-input:focus {
 .zettel-toolbar-actions .btn-small,
 .zettel-mode-btn { white-space: nowrap; }
 .zettel-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ── Graph HUD: three clusters, one height ────────────────────────────────────
+   Twelve controls in a single strip read as a wall. They are grouped by what
+   they do and placed where that kind of control is expected. The filter input
+   also sat taller than the buttons beside it, because it kept the global
+   input chrome; every HUD control is now the same height. */
+
+.graph-hud-controls {
+    top: 12px;
+    left: 14px;
+    right: auto;
+}
+
+.graph-hud-overlays {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    z-index: 10;
+    display: flex;
+    gap: 8px;
+    pointer-events: auto;
+}
+
+/* Zoom and layout live bottom-right, as they do in every map and canvas tool. */
+.graph-hud-view {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    z-index: 10;
+    display: flex;
+    pointer-events: auto;
+}
+
+/* One height for every control in the HUD. */
+.graph-hud-controls > *,
+.graph-hud-overlays .graph-hud-btn-group,
+.graph-hud-view .graph-hud-btn-group {
+    height: 32px;
+    box-sizing: border-box;
+}
+.graph-hud-controls .graph-hud-scope-wrap,
+.graph-hud-controls .graph-hud-search-wrap {
+    display: flex;
+    align-items: center;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+.graph-hud-btn-group { display: flex; align-items: center; }
+.graph-hud-btn { height: 24px; }
+
+/* The filter input carried the global input background, border and radius,
+   which is what made it taller than its neighbours. */
+input.graph-hud-search {
+    height: 22px;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    font-size: 12px;
+    color: inherit;
+    min-width: 130px;
+}
+input.graph-hud-search:focus { outline: none; }
+
+.graph-hud-btn.icon-only { padding: 4px 6px; gap: 0; }
+.graph-hud-btn.icon-only svg, .graph-hud-btn.icon-only .lucide { width: 14px; height: 14px; }
+
+@media (max-width: 1100px) {
+    .graph-hud-overlays .graph-hud-btn span,
+    .graph-hud-overlays .graph-hud-btn { font-size: 11px; }
+}
