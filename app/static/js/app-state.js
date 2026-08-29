@@ -109,7 +109,9 @@ const appState = {
     zettelNotes: [],
     activeZettelNoteId: null,
     activeZettelNote: null,
-    activeZettelSection: 'editor',
+    zettelMode: 'write',          // 'write' | 'graph'
+    zettelFilter: 'all',          // all | anchored | orphans | recent
+    zettelPreviewOn: false,
     zettelGraphData: null,
     pdfChatScope: 'document',
     inkMode: false,

@@ -54,38 +54,72 @@ async function loadZettelNotes(options = {}) {
     }
 }
 
+function zettelFilterCounts() {
+    const notes = appState.zettelNotes || [];
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return {
+        all:      notes.length,
+        anchored: notes.filter(n => n.anchor_annotation_id).length,
+        /* An orphan has nothing pointing at it and points at nothing -- the
+         * note a zettelkasten quietly loses. Surfacing them is the whole
+         * reason this filter exists. */
+        orphans:  notes.filter(n => !n.link_count).length,
+        recent:   notes.filter(n => n.updated_at && Date.parse(n.updated_at) >= weekAgo).length,
+    };
+}
+
+function zettelFilteredNotes() {
+    const q = (document.getElementById('zettel-search')?.value || '').toLowerCase().trim();
+    const filter = appState.zettelFilter || 'all';
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return (appState.zettelNotes || []).filter(n => {
+        if (filter === 'anchored' && !n.anchor_annotation_id) return false;
+        if (filter === 'orphans'  && n.link_count) return false;
+        if (filter === 'recent'   && !(n.updated_at && Date.parse(n.updated_at) >= weekAgo)) return false;
+        if (!q) return true;
+        /* You search a zettelkasten for an idea, and the idea is in the body --
+         * title and tags alone never find it. body_md is already in the list
+         * payload, so this costs nothing. */
+        const hay = `${n.title || ''} ${n.tags_json || ''} ${n.body_md || ''}`.toLowerCase();
+        return hay.includes(q);
+    });
+}
+
+function setZettelFilter(filter) {
+    appState.zettelFilter = filter || 'all';
+    renderZettelSidebar();
+}
+
 function renderZettelSidebar() {
     const list = document.getElementById('zettel-sidebar-list');
     if (!list) return;
-    const q = (document.getElementById('zettel-search')?.value || '').toLowerCase().trim();
-    const notes = (appState.zettelNotes || []).filter(n => {
-        if (!q) return true;
-        const hay = `${n.title || ''} ${(n.tags_json || '')}`.toLowerCase();
-        return hay.includes(q);
-    });
+    const notes = zettelFilteredNotes();
     if (!notes.length) {
-        list.innerHTML = '<div class="projects-empty">No notes yet.</div>';
-        renderZettelSectionNav();
+        const q = (document.getElementById('zettel-search')?.value || '').trim();
+        list.innerHTML = `<div class="projects-empty">${q ? 'No notes match “' + escapeHtml(q) + '”.' : 'No notes here yet.'}</div>`;
+        renderZettelFilterNav();
         return;
     }
     list.innerHTML = notes.map(n => {
         const active = n.note_id === appState.activeZettelNoteId ? 'active' : '';
         const anchor = n.anchor_annotation_id
-            ? '<i data-lucide="anchor" aria-hidden="true" class="zettel-anchor-mark"></i>'
+            ? '<i data-lucide="anchor" aria-hidden="true" class="zettel-anchor-mark" title="Anchored to a passage"></i>'
             : '';
+        /* An orphan is worth flagging in the list, not just in the filter. */
+        const orphan = !n.link_count ? '<span class="zettel-orphan-dot" title="No links yet"></span>' : '';
+        const links = n.link_count ? `${n.link_count} link${n.link_count === 1 ? '' : 's'}` : 'unlinked';
         return `<button class="project-list-item ${active}" onclick="selectZettelNote(${n.note_id})">
             <span class="project-list-name">${anchor}${escapeHtml(n.title || 'Untitled')}</span>
-            <span class="project-list-meta">${n.link_count != null ? n.link_count + ' link(s)' : ''}</span>
+            <span class="project-list-meta">${orphan}${links}</span>
         </button>`;
     }).join('');
     refreshIcons(list);
-    renderZettelSectionNav();
+    renderZettelFilterNav();
 }
 
 async function selectZettelNote(noteId) {
     await flushZettelSave();
     appState.activeZettelNoteId = noteId;
-    appState.activeZettelSection = 'editor';
     renderZettelSidebar();
     setCenterView('notes');
     await loadZettelDetail(noteId);
@@ -105,7 +139,7 @@ function renderZettelEmpty(message = '') {
             <button class="btn-small" onclick="newZettelNote()">${icon('plus')} New note</button>
         </div>`;
     refreshIcons(content);
-    renderZettelSectionNav();
+    renderZettelFilterNav();
 }
 
 /* ── Detail & sections ────────────────────────────────────────────────────── */
@@ -117,14 +151,17 @@ async function loadZettelDetail(noteId) {
         if (!res.ok) throw new Error('Note not found');
         const data = await res.json();
         appState.activeZettelNote = data.note;
-        if (!['editor', 'graph', 'backlinks', 'evidence'].includes(appState.activeZettelSection)) {
-            appState.activeZettelSection = 'editor';
-        }
         renderZettelDetail(data.note);
     } catch (err) {
         console.error('Load note detail error:', err);
         renderZettelEmpty(err.message);
     }
+}
+
+function syncZettelModeSwitch() {
+    const mode = appState.zettelMode || 'write';
+    document.getElementById('zettel-mode-write')?.classList.toggle('active', mode === 'write');
+    document.getElementById('zettel-mode-graph')?.classList.toggle('active', mode === 'graph');
 }
 
 function renderZettelDetail(note) {
@@ -137,59 +174,68 @@ function renderZettelDetail(note) {
         ? `Anchored to “${note.anchor_item_title}”`
         : 'Unanchored atomic note';
 
-    content.innerHTML = renderZettelSection(note, appState.activeZettelSection || 'editor');
+    content.innerHTML = renderZettelSection(note, appState.zettelMode || 'write');
     refreshIcons(content);
-    renderZettelSectionNav();
+    renderZettelFilterNav();
+    syncZettelModeSwitch();
 
-    if (appState.activeZettelSection === 'graph') {
+    /* The preview pane is rebuilt empty by innerHTML; refill it. */
+    if (appState.zettelPreviewOn) renderZettelPreview(note.body_md || '');
+
+    if (appState.zettelMode === 'graph') {
         loadZettelGraph();
     }
     requestAnimationFrame(redrawInkLines);
 }
 
-function zettelSectionDefinitions(note = appState.activeZettelNote) {
-    const links = note?.links || {};
-    const backlinkCount = (links.incoming || []).length;
-    return [
-        { id: 'editor',    label: 'Editor',    iconName: 'pencil' },
-        { id: 'graph',     label: 'Graph',     iconName: 'git-branch' },
-        { id: 'backlinks', label: 'Backlinks', iconName: 'link', count: backlinkCount },
-        { id: 'evidence',  label: 'Evidence',  iconName: 'anchor' },
-    ];
-}
 
-function renderZettelSectionNav() {
+function renderZettelFilterNav() {
     const nav = document.getElementById('zettel-section-nav');
     if (!nav) return;
-    const note = appState.activeZettelNote;
-    if (!note || !appState.activeZettelNoteId) { nav.innerHTML = ''; return; }
+    const c = zettelFilterCounts();
+    const active = appState.zettelFilter || 'all';
+    const defs = [
+        { id: 'all',      label: 'All notes', iconName: 'layers',   count: c.all },
+        { id: 'anchored', label: 'Anchored',  iconName: 'anchor',   count: c.anchored },
+        { id: 'orphans',  label: 'Orphans',   iconName: 'unlink',   count: c.orphans },
+        { id: 'recent',   label: 'This week', iconName: 'clock',    count: c.recent },
+    ];
     nav.innerHTML = `
-        <div class="project-section-title">Note Sections</div>
+        <div class="project-section-title">Filter</div>
         <div class="project-section-tree">
-            ${zettelSectionDefinitions(note).map(s => `
-                <button class="project-section-item ${s.id === appState.activeZettelSection ? 'active' : ''}" onclick="selectZettelSection('${s.id}')">
-                    ${icon(s.iconName)}
-                    <span>${escapeHtml(s.label)}</span>
-                    <small>${s.count != null ? s.count : ''}</small>
+            ${defs.map(d => `
+                <button class="project-section-item ${d.id === active ? 'active' : ''}" onclick="setZettelFilter('${d.id}')">
+                    ${icon(d.iconName)}
+                    <span>${escapeHtml(d.label)}</span>
+                    <small>${d.count}</small>
                 </button>`).join('')}
         </div>`;
     refreshIcons(nav);
 }
 
-async function selectZettelSection(sectionId) {
-    /* Switching section rebuilds the panel with innerHTML, destroying the
-     * textarea -- so anything typed but not yet saved has to land first, and
-     * the re-render has to use the note the server just returned. */
+async function setZettelMode(mode) {
+    /* Switching mode rebuilds the panel with innerHTML, destroying the
+     * textarea -- so anything typed but not yet saved has to land first. */
     await flushZettelSave();
-    appState.activeZettelSection = sectionId || 'editor';
+    appState.zettelMode = mode === 'graph' ? 'graph' : 'write';
     if (appState.activeZettelNote) renderZettelDetail(appState.activeZettelNote);
 }
 
-function renderZettelSection(note, section) {
-    if (section === 'graph')     return renderZettelGraphSection(note);
-    if (section === 'backlinks') return renderZettelBacklinksSection(note);
-    if (section === 'evidence')  return renderZettelEvidenceSection(note);
-    return renderZettelEditorSection(note);
+function renderZettelSection(note, mode) {
+    if (mode === 'graph') return renderZettelGraphSection(note);
+    return renderZettelNoteSurface(note);
+}
+
+/* One scrolling surface. The passage a note is about, the note itself, and
+ * what it connects to are the same thought -- splitting them across tabs meant
+ * you could never see the evidence you were writing about. */
+function renderZettelNoteSurface(note) {
+    return `
+        <div class="zettel-surface">
+            ${renderZettelEvidenceBlock(note)}
+            ${renderZettelEditorSection(note)}
+            ${renderZettelConnections(note)}
+        </div>`;
 }
 
 /* ── Editor section ────────────────────────────────────────────────────────── */
@@ -197,31 +243,36 @@ function renderZettelSection(note, section) {
 function renderZettelEditorSection(note) {
     const tags = safeJsonArray(note.tags_json).join(', ');
     const aliases = safeJsonArray(note.aliases_json).join(', ');
+    const preview = !!appState.zettelPreviewOn;
     return `
-        <section class="project-panel">
-            <div class="project-panel-header">
-                <h3>Editor</h3>
-                <span>${escapeHtml(note.source || 'manual')}</span>
+        <section class="zettel-write">
+            <input type="text" id="zettel-title-input" class="zettel-title-input" value="${escapeHtml(note.title || '')}"
+                   placeholder="One idea, in a sentence" oninput="onZettelTitleInput()">
+            <div class="zettel-meta-row">
+                <input type="text" id="zettel-tags-input" class="compact-input" value="${escapeHtml(tags)}" placeholder="Tags, comma-separated" oninput="onZettelMetaInput()">
+                <input type="text" id="zettel-aliases-input" class="compact-input" value="${escapeHtml(aliases)}" placeholder="Aliases (Obsidian)" oninput="onZettelMetaInput()">
+                <button class="zettel-preview-toggle ${preview ? 'active' : ''}" onclick="toggleZettelPreview()"
+                        title="An atomic note is short; the editor keeps the full width unless you ask for a preview.">
+                    ${icon('eye')} Preview
+                </button>
             </div>
-            <div class="zettel-editor">
-                <div class="zettel-title-row">
-                    <input type="text" id="zettel-title-input" class="compact-input" value="${escapeHtml(note.title || '')}" placeholder="Note title (one idea)" oninput="onZettelTitleInput()">
-                </div>
-                <div class="zettel-meta-row">
-                    <input type="text" id="zettel-tags-input" class="compact-input" value="${escapeHtml(tags)}" placeholder="Tags (comma-separated)" oninput="onZettelMetaInput()">
-                    <input type="text" id="zettel-aliases-input" class="compact-input" value="${escapeHtml(aliases)}" placeholder="Aliases (Obsidian)" oninput="onZettelMetaInput()">
-                </div>
-                <div class="zettel-editor-body">
-                    <textarea id="zettel-body-input" class="zettel-body-input" placeholder="Write in Markdown. Use [[note title]] to link another note." oninput="onZettelBodyInput()" onkeyup="checkZettelLinkAutocomplete(this)" onkeydown="onZettelLinkKeydown(event)">${escapeHtml(note.body_md || '')}</textarea>
-                    <div id="zettel-preview" class="zettel-preview"></div>
-                </div>
-                <div id="zettel-link-autocomplete" class="chat-mention-autocomplete hidden"></div>
-                <div class="zettel-editor-actions">
-                    <button class="btn-secondary btn-small" onclick="addZettelLinkModal()">${icon('link')} Add link</button>
-                    <button class="btn-secondary btn-small danger" onclick="deleteActiveZettelNote()">${icon('trash-2')} Delete</button>
-                </div>
+            <div class="zettel-editor-body ${preview ? 'with-preview' : ''}">
+                <textarea id="zettel-body-input" class="zettel-body-input"
+                          placeholder="Write in Markdown. Type [[ to link another note."
+                          oninput="onZettelBodyInput()" onkeyup="checkZettelLinkAutocomplete(this)" onkeydown="onZettelLinkKeydown(event)">${escapeHtml(note.body_md || '')}</textarea>
+                ${preview ? '<div id="zettel-preview" class="zettel-preview"></div>' : ''}
+            </div>
+            <div id="zettel-link-autocomplete" class="chat-mention-autocomplete hidden"></div>
+            <div class="zettel-write-footer">
+                <span class="project-muted">${escapeHtml(note.source || 'manual')}</span>
+                <button class="zettel-delete-link" onclick="deleteActiveZettelNote()">${icon('trash-2')} Delete note</button>
             </div>
         </section>`;
+}
+
+function toggleZettelPreview() {
+    appState.zettelPreviewOn = !appState.zettelPreviewOn;
+    if (appState.activeZettelNote) renderZettelDetail(appState.activeZettelNote);
 }
 
 function onZettelTitleInput() {
@@ -240,7 +291,7 @@ function onZettelMetaInput() {
 function onZettelBodyInput() {
     const ta = document.getElementById('zettel-body-input');
     scheduleZettelSave({ body_md: ta.value });
-    renderZettelPreview(ta.value);
+    if (appState.zettelPreviewOn) renderZettelPreview(ta.value);
 }
 
 function renderZettelPreview(markdown) {
@@ -445,7 +496,7 @@ async function newZettelNote() {
         const data = await res.json();
         appState.zettelNotes.unshift(data.note);
         appState.activeZettelNoteId = data.note.note_id;
-        appState.activeZettelSection = 'editor';
+        appState.zettelMode = 'write';
         renderZettelSidebar();
         await loadZettelDetail(data.note.note_id);
         const titleInput = document.getElementById('zettel-title-input');
@@ -548,94 +599,118 @@ async function deleteZettelLink(linkId) {
 
 /* ── Backlinks section ─────────────────────────────────────────────────────── */
 
-function renderZettelBacklinksSection(note) {
+function renderZettelConnections(note) {
     const links = note.links || {};
     const incoming = links.incoming || [];
     const outgoing = links.outgoing || [];
-    const byOrigin = groupBy(incoming, 'origin');
+    const isManual = l => (l.origin || 'manual') === 'manual';
+
+    /* A link you drew and a link the machine proposed are different kinds of
+     * claim. The old UI grouped both by origin in one list, so an LLM guess sat
+     * beside your own reasoning with equal weight. */
+    const mine = [
+        ...outgoing.filter(isManual).map(l => ({ ...l, dir: 'out', id: l.target_note_id, title: l.target_title })),
+        ...incoming.filter(isManual).map(l => ({ ...l, dir: 'in',  id: l.source_note_id, title: l.source_title })),
+    ];
+    const suggested = [
+        ...outgoing.filter(l => !isManual(l)).map(l => ({ ...l, dir: 'out', id: l.target_note_id, title: l.target_title })),
+        ...incoming.filter(l => !isManual(l)).map(l => ({ ...l, dir: 'in',  id: l.source_note_id, title: l.source_title })),
+    ];
+
+    const row = (l, removable) => `
+        <div class="zettel-conn-row">
+            <button class="zettel-conn-item" onclick="selectZettelNote(${l.id})">
+                <span class="zettel-conn-dir" title="${l.dir === 'out' ? 'This note links out' : 'Links to this note'}">${l.dir === 'out' ? '→' : '←'}</span>
+                <span class="zettel-conn-title">${escapeHtml(l.title || 'Untitled')}</span>
+                <span class="zettel-conn-type zettel-origin-${escapeHtml(l.origin || 'manual')}">${escapeHtml(l.link_type || originLabel(l.origin))}</span>
+                ${l.rationale ? `<span class="zettel-conn-why">${escapeHtml(l.rationale)}</span>` : ''}
+            </button>
+            ${removable ? `<button class="zettel-conn-remove" onclick="deleteZettelLink(${l.link_id})" title="Remove link">${icon('x')}</button>` : ''}
+        </div>`;
+
     return `
-        <section class="project-panel">
-            <div class="project-panel-header">
-                <h3>Backlinks</h3>
-                <span>${incoming.length} incoming · ${outgoing.length} outgoing</span>
+        <section class="zettel-connections">
+            <header class="zettel-conn-head">
+                <h3>Connections</h3>
+                <span class="zettel-conn-counts">${mine.length} yours · ${suggested.length} suggested</span>
+                <button class="btn-secondary btn-small" onclick="addZettelLinkModal()">${icon('link')} Add link</button>
+            </header>
+
+            <div class="zettel-conn-group">
+                <div class="zettel-conn-group-title">Links you made</div>
+                ${mine.length ? mine.map(l => row(l, l.dir === 'out')).join('')
+                    : '<div class="project-muted">None yet — write <code>[[note title]]</code> in the body, or use Add link.</div>'}
             </div>
-            <div class="zettel-backlinks">
-                ${incoming.length ? Object.entries(byOrigin).map(([origin, items]) => `
-                    <div class="zettel-backlink-group">
-                        <div class="zettel-backlink-origin">${escapeHtml(originLabel(origin))}</div>
-                        ${items.map(l => `
-                            <button class="zettel-backlink-item" onclick="selectZettelNote(${l.source_note_id})">
-                                <span class="zettel-backlink-title">${escapeHtml(l.source_title || 'Untitled')}</span>
-                                <span class="zettel-backlink-type">${escapeHtml(l.link_type)}</span>
-                                ${l.rationale ? `<span class="zettel-backlink-rationale">${escapeHtml(l.rationale)}</span>` : ''}
-                            </button>`).join('')}
-                    </div>`).join('') : '<div class="project-muted">No notes link to this one yet.</div>'}
-                <div class="zettel-outgoing">
-                    <h4>Outgoing links</h4>
-                    ${outgoing.length ? outgoing.map(l => `
-                        <div class="zettel-outgoing-item">
-                            <button class="zettel-backlink-item" onclick="selectZettelNote(${l.target_note_id})">
-                                <span class="zettel-backlink-title">${escapeHtml(l.target_title || 'Untitled')}</span>
-                                <span class="zettel-backlink-type">${escapeHtml(l.link_type)}</span>
-                            </button>
-                            ${l.origin === 'manual' ? `<button class="btn-secondary btn-small danger" onclick="deleteZettelLink(${l.link_id})" title="Remove link">${icon('x')}</button>` : ''}
-                        </div>`).join('') : '<div class="project-muted">No outgoing links. Use [[note title]] in the editor or “Add link”.</div>'}
-                </div>
-            </div>
+
+            ${suggested.length ? `
+            <div class="zettel-conn-group zettel-conn-suggested">
+                <div class="zettel-conn-group-title">Suggested — not yet yours ${icon('sparkles')}</div>
+                ${suggested.map(l => row(l, false)).join('')}
+            </div>` : ''}
         </section>`;
 }
 
 /* ── Evidence section ───────────────────────────────────────────────────────── */
 
-function renderZettelEvidenceSection(note) {
+function renderZettelEvidenceBlock(note) {
     const ev = note.evidence;
-    if (!ev || !note.anchor_annotation_id) {
-        return renderZettelAnchorPicker(note);
-    }
-    const tags = (ev.tags || []).map(t => `<span class="project-theme-chip" style="--theme-color:${t.color || '#3b82f6'}">#${escapeHtml(t.name)}</span>`).join('');
+    if (!ev || !note.anchor_annotation_id) return renderZettelAnchorPicker(note);
+    const collapsed = appState.zettelEvidenceCollapsed ? ' collapsed' : '';
+    const tags = (ev.tags || []).map(t =>
+        `<span class="project-theme-chip" style="--theme-color:${t.color || '#3b82f6'}">#${escapeHtml(t.name)}</span>`).join('');
+    const cite = [ev.item_title, ev.item_year].filter(Boolean).join(' · ');
     return `
-        <section class="project-panel">
-            <div class="project-panel-header">
-                <h3>Evidence</h3>
-                <span>${escapeHtml(ev.item_title || '')}${ev.item_year ? ' · ' + ev.item_year : ''}</span>
-            </div>
-            <div class="zettel-evidence">
-                <div class="zettel-evidence-quote">${escapeHtml(ev.quote || '(no quote captured)')}</div>
-                <div class="zettel-evidence-meta">
-                    <span>${icon('file-text')} Page ${ev.page_index != null ? ev.page_index + 1 : '?'}</span>
-                    ${tags ? `<span class="zettel-evidence-tags">${tags}</span>` : ''}
-                </div>
-                <div class="zettel-evidence-actions">
-                    <button class="btn-small" onclick="jumpToZettelEvidence()">${icon('external-link')} Jump to PDF</button>
-                    <button class="btn-secondary btn-small danger" onclick="removeZettelAnchor()">${icon('unlink')} Remove anchor</button>
-                </div>
-            </div>
+        <section class="zettel-evidence-card${collapsed}">
+            <header class="zettel-evidence-head">
+                <button class="zettel-evidence-toggle" onclick="toggleZettelEvidence()" title="Collapse or expand the passage">
+                    ${icon(appState.zettelEvidenceCollapsed ? 'chevron-right' : 'chevron-down')}
+                    <span class="zettel-evidence-label">Evidence</span>
+                </button>
+                <span class="zettel-evidence-cite">${escapeHtml(cite)}${ev.page_index != null ? ' · p.' + (ev.page_index + 1) : ''}</span>
+                <span class="zettel-evidence-head-actions">
+                    <button class="btn-secondary btn-small" onclick="jumpToZettelEvidence()">${icon('external-link')} Open in PDF</button>
+                    <button class="btn-secondary btn-small danger" onclick="removeZettelAnchor()" title="Remove anchor">${icon('unlink')}</button>
+                </span>
+            </header>
+            <blockquote class="zettel-evidence-quote">${escapeHtml(ev.quote || '(no quote captured)')}</blockquote>
+            ${tags ? `<div class="zettel-evidence-tags">${tags}</div>` : ''}
         </section>`;
+}
+
+function toggleZettelEvidence() {
+    appState.zettelEvidenceCollapsed = !appState.zettelEvidenceCollapsed;
+    if (appState.activeZettelNote) renderZettelDetail(appState.activeZettelNote);
 }
 
 function renderZettelAnchorPicker(note) {
     const currentAnn = appState.editingAnnotationId || appState.noteDrawerAnnotationId || '';
     return `
-        <section class="project-panel">
-            <div class="project-panel-header">
-                <h3>Evidence</h3>
-                <span>Unanchored</span>
+        <section class="zettel-anchor-cta">
+            <div class="zettel-anchor-cta-text">
+                ${icon('anchor')}
+                <span>Not anchored. Tying this note to the passage it came from is what separates a zettelkasten from a notebook.</span>
             </div>
-            <div class="zettel-evidence">
-                <p class="project-muted">This note is not yet anchored to a PDF passage. Anchoring ties the claim to the evidence that supports it — the core of a zettelkasten.</p>
-                <div class="zettel-anchor-picker">
-                    <input type="number" id="zettel-anchor-id" class="compact-input" value="${currentAnn}" placeholder="Annotation ID" style="max-width:160px;">
-                    <button class="btn-small" onclick="setZettelAnchor()">${icon('anchor')} Set anchor</button>
-                </div>
-                <p class="project-muted" style="font-size:0.85em;">Tip: open a PDF, select the annotation you want to anchor to, and its ID is pre-filled here. Or find an annotation ID in the Annotations tab.</p>
+            <div class="zettel-anchor-picker">
+                ${currentAnn
+                    ? `<button class="btn-small" onclick="setZettelAnchor(${Number(currentAnn)})">${icon('anchor')} Anchor to the passage open in the PDF</button>`
+                    : `<span class="project-muted">Open a PDF and select a highlight, then come back — it will be offered here.</span>`}
+                <details class="zettel-anchor-manual">
+                    <summary>Enter an annotation ID</summary>
+                    <div class="zettel-anchor-manual-row">
+                        <input type="number" id="zettel-anchor-id" class="compact-input" value="${currentAnn}" placeholder="Annotation ID" style="max-width:150px;">
+                        <button class="btn-secondary btn-small" onclick="setZettelAnchor()">Set anchor</button>
+                    </div>
+                </details>
             </div>
         </section>`;
 }
 
-async function setZettelAnchor() {
+async function setZettelAnchor(annotationId = null) {
     const note = appState.activeZettelNote;
     if (!note) return;
-    const annId = parseInt(document.getElementById('zettel-anchor-id').value, 10);
+    /* Called either with the annotation already open in the PDF, or from the
+     * manual id field behind the disclosure. */
+    const annId = annotationId || parseInt(document.getElementById('zettel-anchor-id')?.value, 10);
     if (!annId) return;
     try {
         const res = await fetch(`/api/zettel/notes/${note.note_id}`, {
@@ -1104,7 +1179,7 @@ async function recomputeZettelLinks() {
         } else if (res.ok) {
             await loadZettelNotes({ listOnly: true });
             if (appState.activeZettelNote) await loadZettelDetail(appState.activeZettelNote.note_id);
-            if (appState.activeZettelSection === 'graph') loadZettelGraph();
+            if (appState.zettelMode === 'graph') loadZettelGraph();
         } else {
             throw new Error('Recompute failed');
         }
@@ -1123,7 +1198,7 @@ async function pollZettelRecompute(jobId) {
             if (btn) btn.disabled = false;
             await loadZettelNotes({ listOnly: true });
             if (appState.activeZettelNote) await loadZettelDetail(appState.activeZettelNote.note_id);
-            if (appState.activeZettelSection === 'graph') loadZettelGraph();
+            if (appState.zettelMode === 'graph') loadZettelGraph();
         } else if (data.status === 'running' || data.status === 'pending') {
             setTimeout(() => pollZettelRecompute(jobId), 1500);
         } else {

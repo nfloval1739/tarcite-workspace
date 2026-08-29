@@ -11971,3 +11971,282 @@ button.coverage-stat:hover span { text-decoration: underline; }
 .zettel-save-status.dirty  { color: var(--text-muted, #6b7280); }
 .zettel-save-status.saved  { color: var(--green, #16a34a); }
 .zettel-save-status.failed { color: var(--red, #dc2626); font-weight: 600; }
+
+/* ── Zettelkasten: one note surface ───────────────────────────────────────────
+   The passage, the note and its connections are one thought. They used to be
+   four mutually exclusive tabs, so you could never see the evidence you were
+   writing about. This is a single scrolling column instead. */
+
+.zettel-surface {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    max-width: 780px;   /* a measure you can actually read */
+    margin: 0 auto;
+    padding-bottom: 40px;
+}
+
+/* Evidence — sticky, so the quote stays with you as the note grows. */
+.zettel-evidence-card {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    border: 1px solid var(--border, #e5e7eb);
+    border-left: 3px solid var(--accent, #2d6fd4);
+    border-radius: 8px;
+    background: var(--bg-elevated, #fff);
+    padding: 12px 14px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .05);
+}
+.zettel-evidence-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.zettel-evidence-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    color: var(--text, #111827);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+.zettel-evidence-cite {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--text-muted, #6b7280);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.zettel-evidence-head-actions { display: inline-flex; gap: 6px; }
+.zettel-evidence-quote {
+    margin: 10px 0 0;
+    padding: 0 0 0 12px;
+    border-left: 2px solid var(--border, #e5e7eb);
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text, #111827);
+    max-height: 220px;
+    overflow-y: auto;
+}
+.zettel-evidence-tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+.zettel-evidence-card.collapsed .zettel-evidence-quote,
+.zettel-evidence-card.collapsed .zettel-evidence-tags { display: none; }
+
+/* Unanchored: an invitation, not an error. */
+.zettel-anchor-cta {
+    border: 1px dashed var(--border, #e5e7eb);
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: var(--bg-subtle, #f9fafb);
+}
+.zettel-anchor-cta-text {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-muted, #6b7280);
+    margin-bottom: 10px;
+}
+.zettel-anchor-picker { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.zettel-anchor-manual summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-muted, #6b7280);
+}
+.zettel-anchor-manual-row { display: flex; gap: 6px; margin-top: 8px; }
+
+/* The writing itself gets the full measure. */
+.zettel-write { display: flex; flex-direction: column; gap: 10px; }
+.zettel-title-input {
+    width: 100%;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    background: none;
+    padding: 4px 0;
+    font-size: 22px;
+    font-weight: 650;
+    line-height: 1.3;
+    color: var(--text, #111827);
+}
+.zettel-title-input:focus {
+    outline: none;
+    border-bottom-color: var(--accent, #2d6fd4);
+}
+.zettel-meta-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.zettel-meta-row .compact-input { flex: 1; min-width: 140px; }
+.zettel-preview-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 6px;
+    background: none;
+    padding: 5px 9px;
+    font-size: 12px;
+    color: var(--text-muted, #6b7280);
+    cursor: pointer;
+}
+.zettel-preview-toggle.active {
+    background: var(--accent, #2d6fd4);
+    border-color: var(--accent, #2d6fd4);
+    color: #fff;
+}
+.zettel-editor-body { display: block; }
+.zettel-editor-body.with-preview {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+.zettel-body-input {
+    width: 100%;
+    min-height: 260px;
+    resize: vertical;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 14px;
+    line-height: 1.7;
+    background: var(--bg-elevated, #fff);
+    color: var(--text, #111827);
+}
+.zettel-body-input:focus { outline: none; border-color: var(--accent, #2d6fd4); }
+.zettel-write-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+}
+.zettel-delete-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: 0;
+    padding: 2px 4px;
+    font-size: 12px;
+    color: var(--text-muted, #6b7280);
+    cursor: pointer;
+}
+.zettel-delete-link:hover { color: var(--red, #dc2626); }
+
+/* Connections — always under the note, never behind a tab. */
+.zettel-connections {
+    border-top: 1px solid var(--border, #e5e7eb);
+    padding-top: 14px;
+}
+.zettel-conn-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.zettel-conn-head h3 { margin: 0; font-size: 14px; }
+.zettel-conn-counts { flex: 1; font-size: 12px; color: var(--text-muted, #6b7280); }
+.zettel-conn-group { margin-bottom: 14px; }
+.zettel-conn-group-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text-muted, #6b7280);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.zettel-conn-row { display: flex; align-items: stretch; gap: 4px; margin-bottom: 4px; }
+.zettel-conn-item {
+    flex: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    text-align: left;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: var(--bg-subtle, #f9fafb);
+    padding: 7px 10px;
+    cursor: pointer;
+    min-width: 0;
+}
+.zettel-conn-item:hover { border-color: var(--border, #e5e7eb); background: var(--bg-hover, #f3f4f6); }
+.zettel-conn-dir { color: var(--text-muted, #9ca3af); font-size: 13px; flex: none; }
+.zettel-conn-title {
+    font-size: 13px;
+    color: var(--text, #111827);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.zettel-conn-type {
+    flex: none;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--border, #e5e7eb);
+    color: var(--text-muted, #4b5563);
+}
+.zettel-conn-why {
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--text-muted, #9ca3af);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.zettel-conn-remove {
+    flex: none;
+    border: 0;
+    background: none;
+    color: var(--text-muted, #9ca3af);
+    cursor: pointer;
+    padding: 0 6px;
+}
+.zettel-conn-remove:hover { color: var(--red, #dc2626); }
+/* A machine's guess is shown as a guess. */
+.zettel-conn-suggested .zettel-conn-item {
+    background: none;
+    border-style: dashed;
+    border-color: var(--border, #e5e7eb);
+}
+
+/* Write / Graph are modes, not tabs on a note. */
+.zettel-mode-switch {
+    display: inline-flex;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 7px;
+    overflow: hidden;
+    margin-right: 8px;
+}
+.zettel-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 0;
+    background: none;
+    padding: 5px 11px;
+    font-size: 12px;
+    color: var(--text-muted, #6b7280);
+    cursor: pointer;
+}
+.zettel-mode-btn.active { background: var(--accent, #2d6fd4); color: #fff; }
+
+/* An unlinked note is the one a zettelkasten quietly loses. */
+.zettel-orphan-dot {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--amber, #f59e0b);
+    margin-right: 5px;
+    vertical-align: middle;
+}
+
+@media (max-width: 900px) {
+    .zettel-editor-body.with-preview { grid-template-columns: 1fr; }
+}
