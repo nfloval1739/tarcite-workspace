@@ -286,7 +286,15 @@ def list_notes(
     tag: Optional[str] = None,
     q: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    sql = """SELECT n.*, i.title AS item_title, i.year AS item_year
+    # link_count is what the sidebar calls a note "linked" or "unlinked" by, and
+    # what the Orphans filter selects on. Only manual links count: a semantic or
+    # contradiction suggestion is the machine's guess, not a connection the user
+    # has actually made, so a note carrying only those is still an orphan.
+    sql = """SELECT n.*, i.title AS item_title, i.year AS item_year,
+                    (SELECT COUNT(*) FROM zettel_links l
+                      WHERE l.origin = 'manual'
+                        AND (l.source_note_id = n.note_id OR l.target_note_id = n.note_id)
+                    ) AS link_count
                FROM zettel_notes n
                LEFT JOIN items i ON i.item_key = n.anchor_item_key"""
     where: List[str] = []

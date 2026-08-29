@@ -8747,7 +8747,7 @@ html:not([data-theme="light"]) .conf-badge.low     { color: #f87171; }
 }
 .citation-edges path {
     fill: none;
-    stroke: var(--accent, #2d6fd4);
+    stroke: var(--accent);
     stroke-opacity: 0.5;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -11475,7 +11475,6 @@ button.coverage-stat:hover span { text-decoration: underline; }
 .zettel-menu-item i, .zettel-menu-item .lucide { width: 14px; height: 14px; color: var(--text-muted); }
 
 .zettel-editor { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
-.zettel-title-row { display: flex; width: 100%; }
 .zettel-title-row .compact-input { font-size: 15px; font-weight: 700; height: 40px; border-radius: var(--radius-sm); }
 .zettel-meta-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .zettel-meta-row .compact-input { flex: 1; min-width: 180px; height: 38px; font-size: 13px; }
@@ -11532,16 +11531,6 @@ button.coverage-stat:hover span { text-decoration: underline; }
 }
 .zettel-preview .wikilink:hover {
     text-decoration: underline;
-}
-.zettel-editor-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding-top: 10px;
-    margin-top: 4px;
-    border-top: 1px solid var(--border-color);
 }
 
 .zettel-anchor-mark { width: 13px; height: 13px; margin-right: 5px; color: var(--accent); vertical-align: -1px; }
@@ -11965,12 +11954,12 @@ button.coverage-stat:hover span { text-decoration: underline; }
     font-size: 11px;
     margin-top: 2px;
     min-height: 14px;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-muted);
     transition: color .15s ease;
 }
-.zettel-save-status.dirty  { color: var(--text-muted, #6b7280); }
-.zettel-save-status.saved  { color: var(--green, #16a34a); }
-.zettel-save-status.failed { color: var(--red, #dc2626); font-weight: 600; }
+.zettel-save-status.dirty  { color: var(--text-muted); }
+.zettel-save-status.saved  { color: var(--green); }
+.zettel-save-status.failed { color: var(--red); font-weight: 600; }
 
 /* ── Zettelkasten: one note surface ───────────────────────────────────────────
    The passage, the note and its connections are one thought. They used to be
@@ -11981,8 +11970,7 @@ button.coverage-stat:hover span { text-decoration: underline; }
     display: flex;
     flex-direction: column;
     gap: 18px;
-    max-width: 780px;   /* a measure you can actually read */
-    margin: 0 auto;
+    width: 100%;
     padding-bottom: 40px;
 }
 
@@ -11991,12 +11979,12 @@ button.coverage-stat:hover span { text-decoration: underline; }
     position: sticky;
     top: 0;
     z-index: 3;
-    border: 1px solid var(--border, #e5e7eb);
-    border-left: 3px solid var(--accent, #2d6fd4);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
     border-radius: 8px;
-    background: var(--bg-elevated, #fff);
+    background: var(--bg-card);
     padding: 12px 14px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, .05);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .28);
 }
 .zettel-evidence-head {
     display: flex;
@@ -12012,7 +12000,7 @@ button.coverage-stat:hover span { text-decoration: underline; }
     border: 0;
     padding: 0;
     cursor: pointer;
-    color: var(--text, #111827);
+    color: var(--text);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: .06em;
@@ -12022,7 +12010,7 @@ button.coverage-stat:hover span { text-decoration: underline; }
     flex: 1;
     min-width: 0;
     font-size: 12px;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -12031,10 +12019,10 @@ button.coverage-stat:hover span { text-decoration: underline; }
 .zettel-evidence-quote {
     margin: 10px 0 0;
     padding: 0 0 0 12px;
-    border-left: 2px solid var(--border, #e5e7eb);
+    border-left: 2px solid var(--border);
     font-size: 14px;
     line-height: 1.6;
-    color: var(--text, #111827);
+    color: var(--text);
     max-height: 220px;
     overflow-y: auto;
 }
@@ -12044,43 +12032,44 @@ button.coverage-stat:hover span { text-decoration: underline; }
 
 /* Unanchored: an invitation, not an error. */
 .zettel-anchor-cta {
-    border: 1px dashed var(--border, #e5e7eb);
+    border: 1px dashed var(--border);
     border-radius: 8px;
     padding: 12px 14px;
-    background: var(--bg-subtle, #f9fafb);
+    background: var(--bg-secondary);
 }
 .zettel-anchor-cta-text {
     display: flex;
     align-items: flex-start;
     gap: 8px;
     font-size: 13px;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-muted);
     margin-bottom: 10px;
 }
 .zettel-anchor-picker { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .zettel-anchor-manual summary {
     cursor: pointer;
     font-size: 12px;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-muted);
 }
 .zettel-anchor-manual-row { display: flex; gap: 6px; margin-top: 8px; }
 
 /* The writing itself gets the full measure. */
 .zettel-write { display: flex; flex-direction: column; gap: 10px; }
-.zettel-title-input {
+input.zettel-title-input {
     width: 100%;
+    background: none;
+    border-radius: 0;
     border: 0;
     border-bottom: 1px solid transparent;
-    background: none;
     padding: 4px 0;
     font-size: 22px;
     font-weight: 650;
     line-height: 1.3;
-    color: var(--text, #111827);
+    color: var(--text);
 }
-.zettel-title-input:focus {
+input.zettel-title-input:focus {
     outline: none;
-    border-bottom-color: var(--accent, #2d6fd4);
+    border-bottom-color: var(--accent);
 }
 .zettel-meta-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .zettel-meta-row .compact-input { flex: 1; min-width: 140px; }
@@ -12088,17 +12077,17 @@ button.coverage-stat:hover span { text-decoration: underline; }
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    border: 1px solid var(--border, #e5e7eb);
+    border: 1px solid var(--border);
     border-radius: 6px;
     background: none;
     padding: 5px 9px;
     font-size: 12px;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-muted);
     cursor: pointer;
 }
 .zettel-preview-toggle.active {
-    background: var(--accent, #2d6fd4);
-    border-color: var(--accent, #2d6fd4);
+    background: var(--accent);
+    border-color: var(--accent);
     color: #fff;
 }
 .zettel-editor-body { display: block; }
@@ -12111,15 +12100,16 @@ button.coverage-stat:hover span { text-decoration: underline; }
     width: 100%;
     min-height: 260px;
     resize: vertical;
-    border: 1px solid var(--border, #e5e7eb);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px 14px;
-    font-size: 14px;
-    line-height: 1.7;
-    background: var(--bg-elevated, #fff);
-    color: var(--text, #111827);
+    font-size: 15px;
+    line-height: 1.75;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-card);
+    color: var(--text);
 }
-.zettel-body-input:focus { outline: none; border-color: var(--accent, #2d6fd4); }
+.zettel-body-input:focus { outline: none; border-color: var(--accent); }
 .zettel-write-footer {
     display: flex;
     justify-content: space-between;
@@ -12134,26 +12124,26 @@ button.coverage-stat:hover span { text-decoration: underline; }
     border: 0;
     padding: 2px 4px;
     font-size: 12px;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-muted);
     cursor: pointer;
 }
-.zettel-delete-link:hover { color: var(--red, #dc2626); }
+.zettel-delete-link:hover { color: var(--red); }
 
 /* Connections — always under the note, never behind a tab. */
 .zettel-connections {
-    border-top: 1px solid var(--border, #e5e7eb);
+    border-top: 1px solid var(--border);
     padding-top: 14px;
 }
 .zettel-conn-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .zettel-conn-head h3 { margin: 0; font-size: 14px; }
-.zettel-conn-counts { flex: 1; font-size: 12px; color: var(--text-muted, #6b7280); }
+.zettel-conn-counts { flex: 1; font-size: 12px; color: var(--text-muted); }
 .zettel-conn-group { margin-bottom: 14px; }
 .zettel-conn-group-title {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: .06em;
     text-transform: uppercase;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-muted);
     margin-bottom: 6px;
     display: flex;
     align-items: center;
@@ -12168,16 +12158,16 @@ button.coverage-stat:hover span { text-decoration: underline; }
     text-align: left;
     border: 1px solid transparent;
     border-radius: 6px;
-    background: var(--bg-subtle, #f9fafb);
+    background: var(--bg-secondary);
     padding: 7px 10px;
     cursor: pointer;
     min-width: 0;
 }
-.zettel-conn-item:hover { border-color: var(--border, #e5e7eb); background: var(--bg-hover, #f3f4f6); }
-.zettel-conn-dir { color: var(--text-muted, #9ca3af); font-size: 13px; flex: none; }
+.zettel-conn-item:hover { border-color: var(--border); background: var(--bg-hover); }
+.zettel-conn-dir { color: var(--text-muted); font-size: 13px; flex: none; }
 .zettel-conn-title {
     font-size: 13px;
-    color: var(--text, #111827);
+    color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -12187,14 +12177,14 @@ button.coverage-stat:hover span { text-decoration: underline; }
     font-size: 10px;
     padding: 1px 6px;
     border-radius: 999px;
-    background: var(--border, #e5e7eb);
-    color: var(--text-muted, #4b5563);
+    background: var(--border);
+    color: var(--text-muted);
 }
 .zettel-conn-why {
     flex: 1;
     min-width: 0;
     font-size: 11px;
-    color: var(--text-muted, #9ca3af);
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -12203,22 +12193,22 @@ button.coverage-stat:hover span { text-decoration: underline; }
     flex: none;
     border: 0;
     background: none;
-    color: var(--text-muted, #9ca3af);
+    color: var(--text-muted);
     cursor: pointer;
     padding: 0 6px;
 }
-.zettel-conn-remove:hover { color: var(--red, #dc2626); }
+.zettel-conn-remove:hover { color: var(--red); }
 /* A machine's guess is shown as a guess. */
 .zettel-conn-suggested .zettel-conn-item {
     background: none;
     border-style: dashed;
-    border-color: var(--border, #e5e7eb);
+    border-color: var(--border);
 }
 
 /* Write / Graph are modes, not tabs on a note. */
 .zettel-mode-switch {
     display: inline-flex;
-    border: 1px solid var(--border, #e5e7eb);
+    border: 1px solid var(--border);
     border-radius: 7px;
     overflow: hidden;
     margin-right: 8px;
@@ -12231,10 +12221,10 @@ button.coverage-stat:hover span { text-decoration: underline; }
     background: none;
     padding: 5px 11px;
     font-size: 12px;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-muted);
     cursor: pointer;
 }
-.zettel-mode-btn.active { background: var(--accent, #2d6fd4); color: #fff; }
+.zettel-mode-btn.active { background: var(--accent); color: #fff; }
 
 /* An unlinked note is the one a zettelkasten quietly loses. */
 .zettel-orphan-dot {
@@ -12242,7 +12232,7 @@ button.coverage-stat:hover span { text-decoration: underline; }
     width: 5px;
     height: 5px;
     border-radius: 50%;
-    background: var(--amber, #f59e0b);
+    background: var(--warning);
     margin-right: 5px;
     vertical-align: middle;
 }
@@ -12250,3 +12240,8 @@ button.coverage-stat:hover span { text-decoration: underline; }
 @media (max-width: 900px) {
     .zettel-editor-body.with-preview { grid-template-columns: 1fr; }
 }
+
+/* The notes toolbar is dense; let its labels keep one line. */
+.zettel-toolbar-actions .btn-small,
+.zettel-mode-btn { white-space: nowrap; }
+.zettel-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

@@ -170,9 +170,15 @@ function renderZettelDetail(note) {
     const content = document.getElementById('zettel-view-content');
     if (!content) return;
     if (title) title.textContent = note.title || 'Untitled note';
-    if (subtitle) subtitle.textContent = note.anchor_item_title
-        ? `Anchored to “${note.anchor_item_title}”`
-        : 'Unanchored atomic note';
+    /* anchor_item_title comes from a join that is empty when the annotation's
+     * item has no title row, so the header claimed "unanchored" while the
+     * evidence card above it showed the passage. Read the anchor itself. */
+    if (subtitle) {
+        const src = note.evidence?.item_title || note.anchor_item_title;
+        subtitle.textContent = note.anchor_annotation_id
+            ? (src ? `Anchored to “${src}”` : 'Anchored to a passage')
+            : 'Unanchored atomic note';
+    }
 
     content.innerHTML = renderZettelSection(note, appState.zettelMode || 'write');
     refreshIcons(content);
