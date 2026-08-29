@@ -87,6 +87,7 @@ function zettelFilteredNotes() {
 
 function setZettelFilter(filter) {
     appState.zettelFilter = filter || 'all';
+    closeZettelFilterMenu();
     renderZettelSidebar();
 }
 
@@ -202,29 +203,56 @@ function renderZettelDetail(note) {
 }
 
 
+const ZETTEL_FILTERS = [
+    { id: 'all',      label: 'All notes', short: 'All',      iconName: 'layers' },
+    { id: 'anchored', label: 'Anchored',  short: 'Anchored', iconName: 'anchor' },
+    { id: 'orphans',  label: 'Orphans',   short: 'Orphans',  iconName: 'unlink' },
+    { id: 'recent',   label: 'This week', short: 'Week',     iconName: 'clock' },
+];
+
 function renderZettelFilterNav() {
-    const nav = document.getElementById('zettel-section-nav');
-    if (!nav) return;
+    const btn = document.getElementById('zettel-filter-btn');
+    const menu = document.getElementById('zettel-filter-menu');
+    if (!btn || !menu) return;
     const c = zettelFilterCounts();
     const active = appState.zettelFilter || 'all';
-    const defs = [
-        { id: 'all',      label: 'All notes', iconName: 'layers',   count: c.all },
-        { id: 'anchored', label: 'Anchored',  iconName: 'anchor',   count: c.anchored },
-        { id: 'orphans',  label: 'Orphans',   iconName: 'unlink',   count: c.orphans },
-        { id: 'recent',   label: 'This week', iconName: 'clock',    count: c.recent },
-    ];
-    nav.innerHTML = `
-        <div class="project-section-title">Filter</div>
-        <div class="project-section-tree">
-            ${defs.map(d => `
-                <button class="project-section-item ${d.id === active ? 'active' : ''}" onclick="setZettelFilter('${d.id}')">
-                    ${icon(d.iconName)}
-                    <span>${escapeHtml(d.label)}</span>
-                    <small>${d.count}</small>
-                </button>`).join('')}
-        </div>`;
-    refreshIcons(nav);
+    const cur = ZETTEL_FILTERS.find(f => f.id === active) || ZETTEL_FILTERS[0];
+
+    /* The button carries the active filter and its count, so the one number
+     * worth noticing at a glance -- how many notes are listed -- stays visible
+     * without opening anything. */
+    btn.innerHTML = `${icon(cur.iconName)}<span class="zettel-filter-label">${escapeHtml(cur.short)}</span>
+                     <span class="zettel-filter-count">${c[active]}</span>${icon('chevron-down')}`;
+    btn.classList.toggle('filtered', active !== 'all');
+
+    menu.innerHTML = ZETTEL_FILTERS.map(f => `
+        <button class="zettel-filter-item ${f.id === active ? 'active' : ''}" role="menuitem" onclick="setZettelFilter('${f.id}')">
+            ${icon(f.iconName)}
+            <span>${escapeHtml(f.label)}</span>
+            <small>${c[f.id]}</small>
+        </button>`).join('');
+    refreshIcons(btn);
+    refreshIcons(menu);
 }
+
+function toggleZettelFilterMenu(ev) {
+    if (ev) ev.stopPropagation();
+    const menu = document.getElementById('zettel-filter-menu');
+    if (!menu) return;
+    const open = menu.classList.toggle('open');
+    document.getElementById('zettel-filter-btn')?.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function closeZettelFilterMenu() {
+    document.getElementById('zettel-filter-menu')?.classList.remove('open');
+    document.getElementById('zettel-filter-btn')?.setAttribute('aria-expanded', 'false');
+}
+
+/* A menu that only closes by re-clicking its own button feels stuck. */
+document.addEventListener('click', (e) => {
+    if (!e.target.closest?.('.zettel-filter-wrap')) closeZettelFilterMenu();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeZettelFilterMenu(); });
 
 async function setZettelMode(mode) {
     /* Switching mode rebuilds the panel with innerHTML, destroying the

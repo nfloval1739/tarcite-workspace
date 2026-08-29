@@ -12355,3 +12355,83 @@ input.graph-hud-search:focus { outline: none; }
     .graph-hud-overlays .graph-hud-btn span,
     .graph-hud-overlays .graph-hud-btn { font-size: 11px; }
 }
+
+/* ── Notes filter: beside the search it modifies ──────────────────────────────
+   It used to sit at the foot of the sidebar, below the list it filtered, which
+   put the control and its effect at opposite ends of the pane. */
+
+.zettel-search-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+.zettel-search-row .compact-input { flex: 1; min-width: 0; }
+
+.zettel-filter-wrap { position: relative; flex: none; }
+
+.zettel-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 42px;                    /* the search input beside it */
+    box-sizing: border-box;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color .15s, color .15s;
+}
+.zettel-filter-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+/* Anything but "all" is a hidden constraint on the list; say so. */
+.zettel-filter-btn.filtered {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.zettel-filter-btn svg, .zettel-filter-btn .lucide { width: 13px; height: 13px; flex: none; }
+.zettel-filter-count {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    opacity: .75;
+}
+
+.zettel-filter-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 190px;
+    padding: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .3);
+    z-index: 200;
+}
+.zettel-filter-menu.open { display: block; }
+.zettel-filter-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+.zettel-filter-item span { flex: 1; }
+.zettel-filter-item small {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+.zettel-filter-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.zettel-filter-item.active { color: var(--accent); font-weight: 650; }
+.zettel-filter-item svg, .zettel-filter-item .lucide { width: 14px; height: 14px; flex: none; }

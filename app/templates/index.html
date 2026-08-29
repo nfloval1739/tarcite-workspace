@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/static/logo/favicon-32x32.png">
     <link rel="shortcut icon" href="/static/logo/favicon.ico">
     <link rel="apple-touch-icon" href="/static/logo/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/style.css?v=zettel-delete-20260829">
+    <link rel="stylesheet" href="/static/style.css?v=zettel-filter-20260829">
 </head>
 <body>
     <div id="splash-screen" class="splash-screen" aria-hidden="true">
@@ -199,9 +199,14 @@
                         <span>Notes</span>
                         <button class="notes-icon-btn" title="New note" onclick="newZettelNote()"><i data-lucide="plus" aria-hidden="true"></i></button>
                     </div>
-                    <input type="text" id="zettel-search" class="compact-input" placeholder="Search notes..." oninput="renderZettelSidebar()">
+                    <div class="zettel-search-row">
+                        <input type="text" id="zettel-search" class="compact-input" placeholder="Search notes..." oninput="renderZettelSidebar()">
+                        <div class="zettel-filter-wrap">
+                            <button id="zettel-filter-btn" class="zettel-filter-btn" onclick="toggleZettelFilterMenu(event)" aria-haspopup="true" aria-expanded="false" title="Filter which notes are listed"></button>
+                            <div id="zettel-filter-menu" class="zettel-filter-menu" role="menu"></div>
+                        </div>
+                    </div>
                     <div id="zettel-sidebar-list" class="projects-sidebar-list"></div>
-                    <div id="zettel-section-nav" class="projects-section-nav"></div>
                 </div>
 
                 <!-- Settings Tab Content -->
@@ -1010,8 +1015,8 @@
     <script src="/static/js/app-library.js?v=library-health-tabs-20260528"></script>
     <script src="/static/js/app-preview.js?v=translation-freeze-fix-20260817"></script>
     <script src="/static/js/app-projects.js?v=chart-export-20260819"></script>
-    <script src="/static/js/app-annotations.js?v=zettel-delete-20260829"></script>
-    <script src="/static/js/app-notes.js?v=zettel-delete-20260829"></script>
+    <script src="/static/js/app-annotations.js?v=zettel-filter-20260829"></script>
+    <script src="/static/js/app-notes.js?v=zettel-filter-20260829"></script>
     <script src="/static/js/app-search.js?v=quick-search-20260529"></script>
     <script src="/static/js/app-bootstrap.js?v=pdf-selection-ux-20260817"></script>
 <!-- Ink connection SVG overlay — fixed viewport, pointer-events managed per-group -->
