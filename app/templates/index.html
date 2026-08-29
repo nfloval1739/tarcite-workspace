@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/static/logo/favicon-32x32.png">
     <link rel="shortcut icon" href="/static/logo/favicon.ico">
     <link rel="apple-touch-icon" href="/static/logo/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/style.css?v=zettel-wrap-20260829">
+    <link rel="stylesheet" href="/static/style.css?v=zettel-toolbar-20260829">
 </head>
 <body>
     <div id="splash-screen" class="splash-screen" aria-hidden="true">
@@ -449,19 +449,19 @@
                 <!-- Notes (Zettelkasten) Workspace View -->
                 <div id="view-notes" class="center-view">
                     <div class="project-view-toolbar">
-                        <div>
+                        <div class="zettel-view-heading">
                             <div id="zettel-view-title" class="project-view-title">Notes</div>
                             <div id="zettel-view-subtitle" class="project-view-subtitle">Atomic, evidence-anchored notes — your connected web of reading.</div>
                             <div id="zettel-save-status" class="zettel-save-status" aria-live="polite"></div>
                         </div>
                         <div class="zettel-toolbar-actions">
                             <div class="zettel-mode-switch" role="tablist" aria-label="Notes mode">
-                                <button id="zettel-mode-write" class="zettel-mode-btn active" onclick="setZettelMode('write')" role="tab"><i data-lucide="pencil" aria-hidden="true"></i> Write</button>
-                                <button id="zettel-mode-graph" class="zettel-mode-btn" onclick="setZettelMode('graph')" role="tab"><i data-lucide="git-branch" aria-hidden="true"></i> Graph</button>
+                                <button id="zettel-mode-write" class="zettel-mode-btn active" onclick="setZettelMode('write')" role="tab"><i data-lucide="pencil" aria-hidden="true"></i><span class="btn-label">Write</span></button>
+                                <button id="zettel-mode-graph" class="zettel-mode-btn" onclick="setZettelMode('graph')" role="tab"><i data-lucide="git-branch" aria-hidden="true"></i><span class="btn-label">Graph</span></button>
                             </div>
-                            <button class="btn-small" id="zettel-recompute-btn" onclick="recomputeZettelLinks()" title="Recompute shared-evidence, semantic, and contradiction links"><i data-lucide="sparkles" aria-hidden="true"></i> Recompute links</button>
+                            <button class="btn-small" id="zettel-recompute-btn" onclick="recomputeZettelLinks()" title="Recompute shared-evidence, semantic, and contradiction links"><i data-lucide="sparkles" aria-hidden="true"></i><span class="btn-label">Recompute</span></button>
                             <div class="zettel-export-wrap">
-                                <button class="btn-small" onclick="toggleZettelExportMenu(event)" title="Export notes, links, or the graph"><i data-lucide="download" aria-hidden="true"></i> Export <i data-lucide="chevron-down" aria-hidden="true" style="width:12px;height:12px;"></i></button>
+                                <button class="btn-small" onclick="toggleZettelExportMenu(event)" title="Export notes, links, or the graph"><i data-lucide="download" aria-hidden="true"></i><span class="btn-label">Export</span> <i data-lucide="chevron-down" aria-hidden="true" style="width:12px;height:12px;"></i></button>
                                 <div id="zettel-export-menu" class="zettel-export-menu">
                                     <button class="zettel-menu-item" onclick="exportZettelGraphHtml(); closeZettelExportMenu()"><i data-lucide="globe" aria-hidden="true"></i> Standalone interactive HTML</button>
                                     <button class="zettel-menu-item" onclick="exportZettelMdZip(); closeZettelExportMenu()"><i data-lucide="file-archive" aria-hidden="true"></i> Markdown zip (Obsidian)</button>
@@ -471,7 +471,7 @@
                                     <button class="zettel-menu-item" onclick="exportZettelGraphPng(); closeZettelExportMenu()"><i data-lucide="image" aria-hidden="true"></i> Graph PNG</button>
                                 </div>
                             </div>
-                            <button class="btn-small" onclick="newZettelNote()"><i data-lucide="plus" aria-hidden="true"></i> New note</button>
+                            <button class="btn-small" onclick="newZettelNote()"><i data-lucide="plus" aria-hidden="true"></i><span class="btn-label">New note</span></button>
                         </div>
                     </div>
                     <div id="zettel-view-content" class="project-view-content"></div>
@@ -1015,8 +1015,8 @@
     <script src="/static/js/app-library.js?v=library-health-tabs-20260528"></script>
     <script src="/static/js/app-preview.js?v=translation-freeze-fix-20260817"></script>
     <script src="/static/js/app-projects.js?v=chart-export-20260819"></script>
-    <script src="/static/js/app-annotations.js?v=zettel-wrap-20260829"></script>
-    <script src="/static/js/app-notes.js?v=zettel-wrap-20260829"></script>
+    <script src="/static/js/app-annotations.js?v=zettel-toolbar-20260829"></script>
+    <script src="/static/js/app-notes.js?v=zettel-toolbar-20260829"></script>
     <script src="/static/js/app-search.js?v=quick-search-20260529"></script>
     <script src="/static/js/app-bootstrap.js?v=pdf-selection-ux-20260817"></script>
 <!-- Ink connection SVG overlay — fixed viewport, pointer-events managed per-group -->

@@ -12283,7 +12283,28 @@ input.zettel-title-input:focus {
 /* The notes toolbar is dense; let its labels keep one line. */
 .zettel-toolbar-actions .btn-small,
 .zettel-mode-btn { white-space: nowrap; }
-.zettel-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.zettel-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    /* The actions are a fixed set and must stay on one line; the heading beside
+       them is what gives way, since the note's title is repeated as the
+       editable heading immediately below. */
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+}
+
+.zettel-view-heading {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.zettel-view-heading .project-view-title,
+.zettel-view-heading .project-view-subtitle,
+.zettel-view-heading .zettel-save-status {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 
 /* ── Graph HUD: three clusters, one height ────────────────────────────────────
    Twelve controls in a single strip read as a wall. They are grouped by what
@@ -12435,3 +12456,31 @@ input.graph-hud-search:focus { outline: none; }
 .zettel-filter-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .zettel-filter-item.active { color: var(--accent); font-weight: 650; }
 .zettel-filter-item svg, .zettel-filter-item .lucide { width: 14px; height: 14px; flex: none; }
+
+/* ── Notes toolbar: one row, always ───────────────────────────────────────────
+   A long note title used to push the actions onto a second row. The actions are
+   a fixed set, so they hold the line and shed their text labels as the bar
+   narrows -- icons and tooltips remain -- rather than wrapping, or crushing the
+   heading to nothing. Scoped here so the Projects toolbar is untouched. */
+#view-notes .project-view-toolbar {
+    container-type: inline-size;
+    container-name: notetoolbar;
+}
+
+/* Wrapping each label in a span removed the space that separated it from its
+   icon, so the buttons space their own contents now -- and the gap collapses
+   on its own once the label is hidden. */
+.zettel-toolbar-actions .btn-small {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+@container notetoolbar (max-width: 880px) {
+    .zettel-toolbar-actions .btn-small .btn-label { display: none; }
+    .zettel-toolbar-actions .btn-small { padding: 0 12px; }
+}
+@container notetoolbar (max-width: 700px) {
+    .zettel-mode-btn .btn-label { display: none; }
+    .zettel-mode-btn { padding: 0 12px; }
+}
