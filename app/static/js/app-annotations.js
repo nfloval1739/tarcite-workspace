@@ -3600,7 +3600,12 @@ function _initNetworkGraph(items, canvasId = 'network-canvas', emptyId = 'networ
     const parentW = canvas.parentElement ? canvas.parentElement.clientWidth : 0;
     const parentH = canvas.parentElement ? canvas.parentElement.clientHeight : 0;
     const W = Math.max(320, (parentW || 640) - (isZettel ? 0 : 32));
-    const H = isZettel ? Math.max(600, parentH || 720) : (parentH ? Math.max(420, parentH) : 420);
+    /* The zettel graph fills a height-constrained panel, so its canvas can
+       take its height from the parent.  The analysis card's height is driven
+       by its content -- the canvas included -- so a parent-derived height
+       feeds the canvas's own size back into itself and the card grows
+       without bound.  Fixed height there instead. */
+    const H = isZettel ? Math.max(600, parentH || 720) : 420;
     canvas.width = W * dpr; canvas.height = H * dpr;
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
     canvas.getContext('2d').scale(dpr, dpr);
@@ -4334,7 +4339,10 @@ function _netAttachEvents(canvas) {
             if (!pw || !ph) return;
             const isZ = canvas.id === 'zettel-network-canvas';
             const newW = Math.max(320, pw - (isZ ? 0 : 32));
-            const newH = isZ ? Math.max(600, ph) : Math.max(420, ph);
+            /* Only the zettel parent is height-constrained; for the analysis
+               card, resizing to the parent's height would include the canvas
+               itself and grow the card every frame.  Width-only there. */
+            const newH = isZ ? Math.max(600, ph) : _netState.H;
             if (Math.abs(newW - _netState.W) > 4 || Math.abs(newH - _netState.H) > 4) {
                 _netState.W = newW;
                 _netState.H = newH;
