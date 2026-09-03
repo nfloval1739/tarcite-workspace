@@ -34,25 +34,25 @@ All commands are run from the **project root** (the folder containing `citation.
 ```bat
 packaging\build_windows.bat
 ```
-Output: `dist\TarCiteWorkspace-Setup.exe`
+Output: `dist\TarCiteWorkspace-Setup_<version>.exe` (e.g. `TarCiteWorkspace-Setup_02.56.exe` for 0.2.56)
 
 **Minimal build** — no bundled models, smaller installer (models download on first run):
 ```bat
 set BUILD_VARIANT=minimal
 packaging\build_windows.bat
 ```
-Output: `dist\TarCiteWorkspace_minimal-Setup.exe`
+Output: `dist\TarCiteWorkspace_minimal-Setup_<version>.exe`
 
 **Signed local build** (requires a Windows code-signing certificate installed locally):
 ```bat
 set SIGNTOOL=1
 packaging\build_windows.bat
 ```
-Output: signed `dist\TarCiteWorkspace-Setup.exe`
+Output: signed `dist\TarCiteWorkspace-Setup_<version>.exe`
 
 **Signed GitHub Actions build**:
 
-The Windows workflow signs `dist\TarCiteWorkspace_minimal-Setup.exe` automatically when
+The Windows workflow signs `dist\TarCiteWorkspace_minimal-Setup_<version>.exe` automatically when
 these repository secrets are configured:
 
 | Secret | Value |
@@ -93,3 +93,8 @@ Version is defined in these files — update all when bumping:
 | `word-addin/taskpane.html` | Word add-in splash |
 | `packaging/setup.iss` | `MyAppVersion` + `MyAppDisplayVersion` |
 | `citation.spec` | `APP_VERSION` + `APP_VERSION_STR` |
+
+The installer/DMG filenames pick up the version automatically: every build script
+reads the `MyAppDisplayVersion` line in `packaging/setup.iss` and appends the
+`02.56` part to the artifact name, so bumping `setup.iss` is enough — no
+artifact-name edits needed.

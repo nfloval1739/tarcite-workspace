@@ -18,9 +18,9 @@ We are working on obtaining a code signing certificate to remove this warning in
 
 ### Step 1 — Download the installer
 
-Download the latest `.exe` from the release page:
-- **Full installer** (`TarCiteWorkspace-Setup.exe`) — includes AI models (~3–4 GB). Works offline immediately.
-- **Minimal installer** (`TarCiteWorkspace_minimal-Setup.exe`) — smaller download (~200 MB), but requires an internet connection on first run to download models.
+Download the latest `.exe` from the release page (the filename ends with the version, e.g. `_02.56`):
+- **Full installer** (`TarCiteWorkspace-Setup_<version>.exe`) — includes AI models (~3–4 GB). Works offline immediately.
+- **Minimal installer** (`TarCiteWorkspace_minimal-Setup_<version>.exe`) — smaller download (~200 MB), but requires an internet connection on first run to download models.
 
 ### Step 2 — Run the installer
 

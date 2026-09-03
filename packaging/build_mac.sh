@@ -16,6 +16,16 @@ APPLE_TEAM_ID="${APPLE_TEAM_ID:-8XBP4MRL6L}"
 echo "=== TarCite Workspace — macOS Build ==="
 echo
 
+# Artifact version suffix: the "02.56" out of "v.02.56 (Nokilalaki Peak)" in
+# packaging/setup.iss, so DMG filenames carry the version automatically.
+FILE_VER="$(sed -n 's/^#define MyAppDisplayVersion "v\.\([0-9][0-9.]*\).*/\1/p' packaging/setup.iss)"
+if [ -z "$FILE_VER" ]; then
+    echo "ERROR: could not read MyAppDisplayVersion from packaging/setup.iss"
+    exit 1
+fi
+echo "Artifact version suffix: _$FILE_VER"
+echo
+
 # --- 1. App/runtime + build dependencies
 echo "[1/6] Installing app and build dependencies..."
 python -m pip install -r requirements.txt -q
@@ -92,7 +102,7 @@ codesign --verify --deep --strict "dist/TarCiteWorkspace.app" && \
 
 # --- 7. Create DMG and notarize
 echo "[7/7] Creating DMG installer..."
-DMG_OUT="dist/TarCiteWorkspace-mac.dmg"
+DMG_OUT="dist/TarCiteWorkspace-mac_${FILE_VER}.dmg"
 
 if ! command -v create-dmg &> /dev/null; then
     echo "    create-dmg not found. Install with: brew install create-dmg"
@@ -148,7 +158,7 @@ if [ "${MINIMAL:-0}" = "1" ]; then
 
     MINIMAL_STAGE="dist/minimal"
     MINIMAL_APP="$MINIMAL_STAGE/TarCiteWorkspace.app"
-    MINIMAL_DMG="dist/TarCiteWorkspace_minimal-mac.dmg"
+    MINIMAL_DMG="dist/TarCiteWorkspace_minimal-mac_${FILE_VER}.dmg"
 
     # Copy the full app into a staging dir named identically to the full build
     # so the installed app always shows as "TarCite Workspace" in the app list

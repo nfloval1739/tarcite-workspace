@@ -21,11 +21,15 @@
 #define MyAppExeName "TarCiteWorkspace.exe"
 #define MyAppID "{{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 
+; The "02.56" out of MyAppDisplayVersion ("v.02.56 (Nokilalaki Peak)"), so the
+; installer filename carries the version: TarCiteWorkspace-Setup_02.56.exe
+#define MyAppFileVer Copy(MyAppDisplayVersion, 3, Pos(" ", MyAppDisplayVersion) - 3)
+
 #ifndef SrcDir
   #define SrcDir "..\dist\TarCiteWorkspace"
 #endif
 #ifndef OutputBase
-  #define OutputBase "TarCiteWorkspace-Setup"
+  #define OutputBase "TarCiteWorkspace-Setup_" + MyAppFileVer
 #endif
 
 [Setup]

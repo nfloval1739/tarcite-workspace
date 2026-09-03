@@ -15,7 +15,7 @@ self-contained package. **Inno Setup** then wraps it into an installer.
 
 | Output | Tool |
 |---|---|
-| `TarCiteWorkspace-Setup.exe` | PyInstaller + Inno Setup |
+| `TarCiteWorkspace-Setup_<version>.exe` (e.g. `TarCiteWorkspace-Setup_02.56.exe`) | PyInstaller + Inno Setup |
 
 The full package includes everything the user needs — no internet connection required
 after install:
@@ -60,7 +60,7 @@ The script runs these steps automatically:
 2. Skips ML model download if `packaging\models\` already exists
 3. Downloads the Ollama binary and copies qwen2.5:3b model blobs if not already present
 4. Runs PyInstaller → produces `dist\TarCiteWorkspace\`
-5. Runs Inno Setup (`iscc`) → produces `dist\TarCiteWorkspace-Setup.exe`
+5. Runs Inno Setup (`iscc`) → produces `dist\TarCiteWorkspace-Setup_<version>.exe`
 
 For the minimal installer:
 
@@ -72,8 +72,8 @@ packaging\build_windows.bat
 ### Build output
 
 ```
-dist\TarCiteWorkspace-Setup.exe    ← distribute this file
-dist\TarCiteWorkspace\             ← intermediate folder (not distributed)
+dist\TarCiteWorkspace-Setup_<version>.exe    ← distribute this file
+dist\TarCiteWorkspace\                        ← intermediate folder (not distributed)
 ```
 
 ---
@@ -100,7 +100,7 @@ base64 -i certificate.pfx | tr -d '\n' | pbcopy
 
 Then add both secrets in GitHub: **Settings → Secrets and variables → Actions**.
 
-The workflow signs `dist\TarCiteWorkspace_minimal-Setup.exe` before uploading it to the
+The workflow signs `dist\TarCiteWorkspace_minimal-Setup_<version>.exe` before uploading it to the
 `windows-latest` release. If the secrets are missing, the workflow still builds and
 uploads the installer, but it remains unsigned.
 
@@ -109,7 +109,7 @@ If you build locally and have your own code-signing certificate:
 ```bat
 signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ^
     /n "<Your Certificate Subject>" ^
-    dist\TarCiteWorkspace-Setup.exe
+    dist\TarCiteWorkspace-Setup_<version>.exe
 ```
 
 ---

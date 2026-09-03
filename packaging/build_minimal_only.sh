@@ -7,9 +7,23 @@ CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: PT. DIGITAL EN
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-8XBP4MRL6L}"
 MINIMAL_STAGE="dist/minimal"
 MINIMAL_APP="$MINIMAL_STAGE/TarCiteWorkspace.app"
-MINIMAL_DMG="dist/TarCiteWorkspace_minimal-mac.dmg"
 ICNS_OUT="packaging/TarCiteWorkspace.icns"
-APP_VERSION="0.2.46"
+
+# Bundle version comes from citation.spec (the source of truth for the app).
+APP_VERSION="$(sed -n 's/^APP_VERSION_STR = "\(.*\)"/\1/p' citation.spec)"
+if [ -z "$APP_VERSION" ]; then
+    echo "ERROR: could not read APP_VERSION_STR from citation.spec"
+    exit 1
+fi
+
+# Artifact version suffix: the "02.56" out of "v.02.56 (Nokilalaki Peak)" in
+# packaging/setup.iss, so the DMG filename carries the version automatically.
+FILE_VER="$(sed -n 's/^#define MyAppDisplayVersion "v\.\([0-9][0-9.]*\).*/\1/p' packaging/setup.iss)"
+if [ -z "$FILE_VER" ]; then
+    echo "ERROR: could not read MyAppDisplayVersion from packaging/setup.iss"
+    exit 1
+fi
+MINIMAL_DMG="dist/TarCiteWorkspace_minimal-mac_${FILE_VER}.dmg"
 
 echo "=== Staging minimal app ==="
 rm -rf "$MINIMAL_STAGE"

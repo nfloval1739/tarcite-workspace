@@ -37,8 +37,11 @@ jobs:
         # NOTE: GitHub Releases has a 2 GB per-file limit on free accounts.
         # The full bundle (~3-4 GB) cannot be uploaded as a release asset.
         # Build MINIMAL here; build the FULL bundle locally on a real Windows PC.
+        # The build script exports MINIMAL_INSTALLER (the versioned exe path,
+        # e.g. dist\TarCiteWorkspace_minimal-Setup_02.56.exe) via GITHUB_ENV.
         env:
           BUILD_VARIANT: minimal
+          CI: "1"
         run: packaging\build_windows.bat
 
       - name: Sign Windows installer
@@ -56,7 +59,10 @@ jobs:
             exit 0
           }
 
-          $installer = "dist\TarCiteWorkspace_minimal-Setup.exe"
+          $installer = $env:MINIMAL_INSTALLER
+          if ([string]::IsNullOrWhiteSpace($installer)) {
+            throw "MINIMAL_INSTALLER was not set by the build script"
+          }
           if (!(Test-Path $installer)) {
             throw "Installer not found: $installer"
           }
@@ -94,7 +100,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: windows-latest
           RELEASE_TITLE: TarCite Windows Latest
-          ASSET_PATH: dist\TarCiteWorkspace_minimal-Setup.exe
         run: |
           $ErrorActionPreference = "Stop"
 
@@ -105,8 +110,12 @@ jobs:
             }
           }
 
-          if (!(Test-Path $env:ASSET_PATH)) {
-            throw "Installer not found: $env:ASSET_PATH"
+          $assetPath = $env:MINIMAL_INSTALLER
+          if ([string]::IsNullOrWhiteSpace($assetPath)) {
+            throw "MINIMAL_INSTALLER was not set by the build script"
+          }
+          if (!(Test-Path $assetPath)) {
+            throw "Installer not found: $assetPath"
           }
 
           if ($env:WINDOWS_INSTALLER_SIGNING_STATUS -eq "signed") {
@@ -128,13 +137,13 @@ jobs:
 
           gh release view $env:RELEASE_TAG *> $null
           if ($LASTEXITCODE -ne 0) {
-            Invoke-Gh release create $env:RELEASE_TAG $env:ASSET_PATH `
+            Invoke-Gh release create $env:RELEASE_TAG $assetPath `
               --target $env:GITHUB_SHA `
               --title $env:RELEASE_TITLE `
               --notes $notes `
               --prerelease
           } else {
-            Invoke-Gh release upload $env:RELEASE_TAG $env:ASSET_PATH --clobber
+            Invoke-Gh release upload $env:RELEASE_TAG $assetPath --clobber
             Invoke-Gh release edit $env:RELEASE_TAG `
               --target $env:GITHUB_SHA `
               --title $env:RELEASE_TITLE `

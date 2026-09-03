@@ -23,6 +23,23 @@ if "%MINIMAL_ONLY%"=="1" (
 ) else (
     echo Variant : FULL (models + Ollama + qwen2.5:3b bundled)
 )
+
+REM --- 0b. Version suffix for artifact names ----------------------------------
+REM The third token of the MyAppDisplayVersion line is "v.02.56 -- skip the
+REM leading quote and "v." (3 chars) to get the 02.56 filename suffix.
+set "FILE_VER="
+for /f "usebackq tokens=3" %%A in (`findstr /B /C:"#define MyAppDisplayVersion" packaging\setup.iss`) do set "FILE_VER=%%A"
+if defined FILE_VER set "FILE_VER=%FILE_VER:~3%"
+if not defined FILE_VER set "FILE_VER=unknown"
+set "FULL_EXE=dist\TarCiteWorkspace-Setup_%FILE_VER%.exe"
+set "MINIMAL_EXE=dist\TarCiteWorkspace_minimal-Setup_%FILE_VER%.exe"
+echo Artifact suffix : _%FILE_VER%
+
+REM Export the installer paths for CI (GitHub Actions reads GITHUB_ENV)
+if defined CI if defined GITHUB_ENV (
+    echo FULL_INSTALLER=%FULL_EXE%>> "%GITHUB_ENV%"
+    echo MINIMAL_INSTALLER=%MINIMAL_EXE%>> "%GITHUB_ENV%"
+)
 echo.
 
 REM --- 1. Build dependencies ------------------------------------------------
@@ -130,7 +147,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo === Full installer created: dist\TarCiteWorkspace-Setup.exe ===
+echo === Full installer created: %FULL_EXE% ===
 
 REM --- 7. Optional: sign the installer --------------------------------------
 if "%SIGNTOOL%"=="1" (
@@ -138,7 +155,7 @@ if "%SIGNTOOL%"=="1" (
     echo --- Attempting to sign installer ---
     where signtool >nul 2>nul
     if %errorlevel% equ 0 (
-        signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td sha256 /a "dist\TarCiteWorkspace-Setup.exe"
+        signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td sha256 /a "%FULL_EXE%"
         if errorlevel 1 (
             echo WARNING: Signing failed. Make sure a code signing certificate is installed.
         ) else (
@@ -169,25 +186,25 @@ if exist "%MINIMAL_STAGE%\_internal\models"        rmdir /s /q "%MINIMAL_STAGE%\
 if exist "%MINIMAL_STAGE%\_internal\ollama_models" rmdir /s /q "%MINIMAL_STAGE%\_internal\ollama_models"
 echo     Models stripped from minimal build.
 
-iscc packaging\setup.iss /DSrcDir="..\dist\min_stage" /DOutputBase="TarCiteWorkspace_minimal-Setup"
+iscc packaging\setup.iss /DSrcDir="..\dist\min_stage" /DOutputBase="TarCiteWorkspace_minimal-Setup_%FILE_VER%"
 if errorlevel 1 (
     echo WARNING: Inno Setup failed for minimal build.
 ) else (
-    echo === Minimal installer created: dist\TarCiteWorkspace_minimal-Setup.exe ===
+    echo === Minimal installer created: %MINIMAL_EXE% ===
 )
 
 if "%SIGNTOOL%"=="1" (
     where signtool >nul 2>nul
     if %errorlevel% equ 0 (
-        signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td sha256 /a "dist\TarCiteWorkspace_minimal-Setup.exe" >nul 2>&1
+        signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td sha256 /a "%MINIMAL_EXE%" >nul 2>&1
         if errorlevel 0 echo Minimal installer signed successfully.
     )
 )
 
 echo.
 echo === BUILD COMPLETE ===
-echo Full installer    : %cd%\dist\TarCiteWorkspace-Setup.exe
-echo Minimal installer : %cd%\dist\TarCiteWorkspace_minimal-Setup.exe
+echo Full installer    : %cd%\%FULL_EXE%
+echo Minimal installer : %cd%\%MINIMAL_EXE%
 echo.
 echo Next steps:
 echo 1. Test the installer on a clean Windows machine (or VM).
