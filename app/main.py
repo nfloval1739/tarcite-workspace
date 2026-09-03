@@ -61,7 +61,7 @@ STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
 WORD_ADDIN_DIR = BASE_DIR.parent / "word-addin"
 
-app = FastAPI(title="TarCite Workspace", version="0.2.46")
+app = FastAPI(title="TarCite Workspace", version="0.2.56")
 
 @app.middleware("http")
 async def _no_cache_static(request: Request, call_next):

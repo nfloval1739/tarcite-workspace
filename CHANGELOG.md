@@ -5,7 +5,7 @@ All notable changes to TarCite Workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.56] - 2026-09-03
 
 ### Added
 - **Evidence-anchored zettelkasten (Notes tab).** A new top-level **Notes** tab
@@ -176,6 +176,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   than 10 times are flagged as unstable, and the card reports how many
   annotations had no counterpart in the other coder's export — disagreement
   about *what* to code, which κ cannot measure.
+- **The Theme Relationship Network card grew without bound and showed a blank
+  canvas.** The network canvas took its height from its parent card's
+  `clientHeight`, but the analysis card's height is driven by its content —
+  the canvas included — so the `ResizeObserver` watching the card re-read a
+  taller card every frame and grew the canvas again, until the card filled
+  the screen with empty space while the graph was drawn far below the visible
+  area. The analysis and project canvases now keep a fixed height and resize
+  on width only; the Notes graph still fills its height-constrained panel.
 - The theme network ran a 220-iteration O(n²) layout over every theme,
   synchronously: 200 themes measured ~500 ms and 400 themes ~2 s, on every
   dashboard render — and the annotation search box triggers one per keystroke.
@@ -345,7 +353,8 @@ First public release. Highlights of the application as it stands:
 Versions prior to 0.2.26 (the `v.01.x` and early `v.02.x` series) were private beta
 builds and are not itemized here.
 
-[Unreleased]: https://github.com/nfloval1739/tarcite-workspace/compare/v0.2.46...HEAD
+[Unreleased]: https://github.com/nfloval1739/tarcite-workspace/compare/v0.2.56...HEAD
+[0.2.56]: https://github.com/nfloval1739/tarcite-workspace/compare/v0.2.46...v0.2.56
 [0.2.46]: https://github.com/nfloval1739/tarcite-workspace/compare/v0.2.36...v0.2.46
 [0.2.36]: https://github.com/nfloval1739/tarcite-workspace/compare/v0.2.26...v0.2.36
 [0.2.26]: https://github.com/nfloval1739/tarcite-workspace/releases/tag/v0.2.26
